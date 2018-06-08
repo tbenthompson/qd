@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.optimize import fsolve
 
 import cppimport.import_hook
 from . import newton
@@ -54,3 +55,21 @@ def solve_for_full_state(model, t, y):
     V = rate_state_solve(model, traction, state)
     dstatedt = state_evolution(model.cfg, V, state)
     return slip, slip_deficit, state, traction, V, dstatedt
+
+def init_zero_slip(model):
+    t = 0
+    init_slip = np.zeros((model.m.tris.shape[0] * 9))
+    init_state = np.ones((model.m.tris.shape[0] * 3))
+    return t, init_slip, init_state
+
+def init_creep(model, traction_to_slip):
+    V_i = model.cfg['plate_rate']
+    def f(state):
+        return aging_law(model.cfg, V_i, state)
+    state_i = fsolve(f, 0.7)[0]
+    sigma_n = model.cfg['additional_normal_stress']
+    tau_i = newton.F(V_i, sigma_n, state_i, model.cfg['a'][0], model.cfg['V0'])
+    init_traction = tau_i * model.field_100_interior
+    init_slip_deficit = traction_to_slip(init_traction)
+    init_state =  state_i * np.ones((model.m.tris.shape[0] * 3))
+    return 0, -init_slip_deficit, init_state

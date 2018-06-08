@@ -1,8 +1,6 @@
 import logging
 import numpy as np
 
-from scipy.optimize import fsolve
-
 import tectosaur.mesh.mesh_gen
 from tectosaur.mesh.combined_mesh import CombinedMesh
 from tectosaur.util.geometry import unscaled_normals
@@ -11,7 +9,7 @@ from tectosaur.constraints import build_constraint_matrix
 
 from .ops import get_slip_to_traction
 
-class Model:
+class FullspaceModel:
     def __init__(self, m, cfg):
         self.cfg = cfg
         self.setup_mesh(m)
@@ -43,8 +41,12 @@ class Model:
         if type(self.cfg['tectosaur_cfg']['log_level']) is str:
             log_level = getattr(logging, self.cfg['tectosaur_cfg']['log_level'])
             self.cfg['tectosaur_cfg']['log_level'] = log_level
-        self.cfg['cs'] = np.sqrt(self.cfg['sm'] / self.cfg['density'])# Shear wave speed (m/s)
-        self.cfg['eta'] = self.cfg['sm'] / (2 * self.cfg['cs'])       # The radiation damping coefficient (kg / (m^2 * s))
+
+        # Shear wave speed (m/s)
+        self.cfg['cs'] = np.sqrt(self.cfg['sm'] / self.cfg['density'])
+
+        # The radiation damping coefficient (kg / (m^2 * s))
+        self.cfg['eta'] = self.cfg['sm'] / (2 * self.cfg['cs'])
 
     def print_length_scales(self):
         sigma_n = self.cfg['additional_normal_stress']
@@ -55,7 +57,10 @@ class Model:
         self.Lb = self.cfg['sm'] * self.cfg['Dc'] / (sigma_n * self.cfg['b'])
 
         #TODO: Remove and replace with empirical version directly from matrix.
-        self.hstar = (np.pi * self.cfg['sm'] * self.cfg['Dc']) / (sigma_n * (self.cfg['b'] - self.cfg['a']))
+        self.hstar = (
+            (np.pi * self.cfg['sm'] * self.cfg['Dc']) /
+            (sigma_n * (self.cfg['b'] - self.cfg['a']))
+        )
         self.hstarRA = (
             (2.0 / np.pi) * self.cfg['sm'] * self.cfg['b'] * self.cfg['Dc']
             / ((self.cfg['b'] - self.cfg['a']) ** 2 * sigma_n)
@@ -69,21 +74,3 @@ class Model:
         print('hstar_RA3D (3d strike slip, lapusta and liu 2009)', np.min(np.abs(self.hstarRA3D)))
         print('cohesive zone length scale', np.min(self.Lb))
         print('mesh length scale', self.mesh_L)
-
-    def init_zero_slip(self):
-        t = 0
-        init_slip = np.zeros((self.m.tris.shape[0] * 9))
-        init_state = np.ones((self.m.tris.shape[0] * 3))
-        return t, init_slip, init_state
-
-    def init_creep(self):
-        V_i = self.cfg['plate_rate']
-        def f(state):
-            return aging_law(self.cfg, V_i, state)
-        state_i = fsolve(f, 0.7)[0]
-        tau_i = qd_newton.F(V_i, qd_cfg['additional_normal_stress'], state_i, qd_cfg['a'][0], qd_cfg['V0'])
-        init_traction = tau_i * self.field_100_interior
-        init_slip_deficit = traction_to_slip(init_traction)
-        init_traction2 = self.slip_to_traction(init_slip_deficit)
-        init
-        return 0,

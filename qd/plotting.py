@@ -5,7 +5,9 @@ import matplotlib.pyplot as plt
 from IPython.display import clear_output
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-from qd_helpers import QDMeshData, separate_slip_state
+from . import siay
+from .derivs import solve_for_full_state
+# from qd_helpers import QDMeshData, separate_slip_state
 
 def plot_fields(m, field, levels = None, cmap = 'seismic', symmetric_scale = False, ds = None, figsize = None):
     field_reshape = field.reshape(m.tris.shape[0],3,-1)
@@ -40,28 +42,27 @@ def plot_fields(m, field, levels = None, cmap = 'seismic', symmetric_scale = Fal
         #plt.axis('equal')
     plt.show()
 
-def plot_setting(t, y, qdm, qd_cfg, slip_to_traction):
+def plot_setting(t, y, model):
     slip, slip_deficit, state, traction, V, dstatedt = solve_for_full_state(
-        qdm, qd_cfg, slip_to_traction, t, y
+        model, t, y
     )
-    #print('slip')
-    #plot_signs(slip)
-    #plot_fields(np.log10(np.abs(slip) + 1e-40))
-    #print('deficit')
-    #plot_signs(slip_deficit)
-    #plot_fields(np.log10(np.abs(slip_deficit) + 1e-40))
     print('slip')
-    plot_fields(qdm.m, slip)
+    plot_fields(model.m, slip)
     print('V')
-    #plot_signs(V)
-    plot_fields(qdm.m, np.log10(np.abs(V) + 1e-40))
+    plot_fields(model.m, np.log10(np.abs(V) + 1e-40))
     print('traction')
-    min_trac = 0.9 * np.max(traction)
-    max_trac = np.max(traction)
-    plot_fields(qdm.m, traction)#, levels = np.linspace(min_trac, max_trac, 20))
+    plot_fields(model.m, traction)
     print('state')
-    plot_fields(qdm.m, state)
+    plot_fields(model.m, state)
 
+def display_model_time(integrator):
+    clear_output(wait = True)
+    t = integrator.h_t[-1]
+    print(integrator.step_idx(), t / siay)
+
+def display_full_model_state(integrator):
+    display_model_time(integrator)
+    plot_setting(integrator.h_t[-1], integrator.h_y[-1], integrator.model)
 
 class QDPlotData:
     def __init__(self, data):
@@ -69,7 +70,6 @@ class QDPlotData:
         m, self.qd_cfg, t, y = self.data
         self.qdm = QDMeshData((m.pts, m.tris))
         self.t = np.array(t)
-        siay = 365.25 * 24 * 3600
         self.t_years = self.t / siay
         self.y = np.array(y)
         self.slip_to_traction = None
