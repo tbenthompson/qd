@@ -31,7 +31,8 @@ def rate_state_solve(model, traction, state):
         model.tri_normals, traction, state, V,
         model.cfg['a'], model.cfg['eta'], model.cfg['V0'],
         model.cfg['additional_normal_stress'],
-        1e-12, 50
+        1e-12, 50, int(model.n_dofs / model.n_tris),
+        model.cfg.get('rs_separate_dims', False)
     )
     return (
         model.field_100_edges * model.cfg['plate_rate']
@@ -71,5 +72,5 @@ def init_creep(model, traction_to_slip):
     tau_i = newton.F(V_i, sigma_n, state_i, model.cfg['a'][0], model.cfg['V0'])
     init_traction = tau_i * model.field_100_interior
     init_slip_deficit = traction_to_slip(init_traction)
-    init_state =  state_i * np.ones((model.m.tris.shape[0] * 3))
+    init_state =  state_i * np.ones((model.n_dofs))
     return 0, -init_slip_deficit, init_state

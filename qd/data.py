@@ -32,20 +32,24 @@ class MonolithicDataSaver:
 def initial_data_path(folder_name):
     return os.path.join(folder_name, 'initial_data.npy')
 
+def skip_existing_prefixed_folders(prefix):
+    i = 0
+    while True:
+        name = prefix + str(i)
+        if not os.path.exists(name):
+            break
+        i += 1
+    return name
+
 """
 Saves chunks of time steps in separate files for easy reloading.
 """
 class ChunkedDataSaver:
-    def __init__(self, chunk_size = 100, folder_name = 'data'):
+    def __init__(self, chunk_size = 100, folder_prefix = 'data'):
         self.chunk_size = chunk_size
-        self.folder_name = folder_name
-        self.check_folder()
-
-    def check_folder(self):
-        if os.path.exists(self.folder_name):
-            raise Exception(f'Data folder \'{self.folder_name}\' already exists. Please move or delete.')
-        else:
-            os.makedirs(self.folder_name)
+        self.folder_prefix = folder_prefix
+        self.folder_name = skip_existing_prefixed_folders(self.folder_prefix)
+        os.makedirs(self.folder_name)
 
     def initialized(self, integrator):
         np.save(
@@ -68,9 +72,11 @@ class ChunkedDataSaver:
                 ], dtype = np.object)
             )
 
+
 class ChunkedDataLoader:
-    def __init__(self, folder_name = 'data'):
+    def __init__(self, folder_name, basis_dim):
         self.folder_name = folder_name
+        self.basis_dim = basis_dim
         self.idxs = []
         self.ts = None
         self.ys = None
@@ -96,7 +102,7 @@ class ChunkedDataLoader:
         new_idxs.sort()
 
         new_ts = np.empty(new_idxs[-1])
-        new_ys = np.empty((new_idxs[-1], self.m.tris.shape[0] * 12))
+        new_ys = np.empty((new_idxs[-1], self.m.tris.shape[0] * 4 * (self.basis_dim)))
 
         if self.ts is not None:
             new_ts[:self.idxs[-1]] = self.ts
@@ -114,5 +120,5 @@ class ChunkedDataLoader:
 
         self.idxs += new_idxs
 
-def load(folder_name = 'data'):
-    return ChunkedDataLoader()
+def load(folder_name, basis_dim):
+    return ChunkedDataLoader(folder_name, basis_dim)

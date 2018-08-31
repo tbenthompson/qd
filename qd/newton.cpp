@@ -71,11 +71,49 @@ auto newton_rs(double tau_qs, double eta, double sigma_n,
     return out;
 }
 
+
+Vec3 solve_for_dof_mag(const Vec3& traction_vec, double state, const Vec3& normal,
+    const std::function<double(double, double)> rs_solver) 
+{
+    const double eps = 1e-14;
+    auto normal_stress_vec = projection(traction_vec, normal);
+    auto shear_traction_vec = sub(traction_vec, normal_stress_vec);
+
+    //TODO: fix the normal stress!
+    double normal_mag = 0.0;//length(normal_stress_vec);
+    double shear_mag = length(shear_traction_vec);
+    if (shear_mag < eps) {
+        return {0,0,0};
+    }
+
+    double V_mag = rs_solver(shear_mag, normal_mag);
+
+    auto shear_dir = div(shear_traction_vec, shear_mag);
+    return mult(shear_dir, V_mag);
+}
+
+template <typename T> int sgn(T val) {
+    return (T(0) < val) - (val < T(0));
+}
+
+Vec3 solve_for_dof_separate_dims(const Vec3& traction_vec,
+        double state, const Vec3& normal,
+        const std::function<double(double, double)> rs_solver) 
+{
+    Vec3 out;
+    double normal_mag = 0.0;//length(normal_stress_vec);
+    for (int d = 0; d < 3; d++) {
+        auto t = traction_vec[d];
+        out[d] = rs_solver(std::fabs(t), normal_mag) * sgn(t);
+    }
+    return out;
+}
+
 void rate_state_solver(NPArray<double> tri_normals, NPArray<double> traction,
         NPArray<double> state, NPArray<double> velocity, NPArray<double> a,
         double eta, double V0,
         double additional_normal_stress,
-        double tol, double maxiter)
+        double tol, double maxiter, int basis_dim, bool separate_dims)
 {
     auto* tri_normals_ptr = as_ptr<Vec3>(tri_normals);
     auto* state_ptr = as_ptr<double>(state);
@@ -84,8 +122,6 @@ void rate_state_solver(NPArray<double> tri_normals, NPArray<double> traction,
     auto* a_ptr = as_ptr<double>(a);
 
     size_t n_tris = tri_normals.request().shape[0];
-    const int basis_dim = 3;
-    const double eps = 1e-14;
 
     for (size_t i = 0; i < n_tris; i++) {
         auto normal = tri_normals_ptr[i];
@@ -94,36 +130,34 @@ void rate_state_solver(NPArray<double> tri_normals, NPArray<double> traction,
             size_t dof = i * basis_dim + d;
             auto traction_vec = traction_ptr[dof];
             auto state = state_ptr[dof];
+            
+            auto rs_solver_fnc = [&] (double shear_mag, double normal_mag) {
+                auto solve_result = newton_rs(
+                    shear_mag, eta, normal_mag + additional_normal_stress, 
+                    state, a_ptr[dof], V0, 0.0, tol, maxiter
+                );
+                assert(solve_result.second);
+                return solve_result.first;
+            };
 
-            auto normal_stress_vec = projection(traction_vec, normal);
-            //TODO: fix the normal stress!
-            double normal_mag = 0.0;//length(normal_stress_vec);
-            normal_mag += additional_normal_stress;
-            auto shear_traction_vec = sub(traction_vec, normal_stress_vec);
-            double shear_mag = length(shear_traction_vec);
-
-            auto solve_result = newton_rs(
-                shear_mag, eta, normal_mag, state,
-                a_ptr[dof], V0, 0.0, tol, maxiter
-            );
-            assert(solve_result.second);
-            double V_new_mag = solve_result.first;
-            Vec3 V_new;
-            if (shear_mag > eps) {
-                auto shear_dir = div(shear_traction_vec, shear_mag);
-                V_new = mult(shear_dir, V_new_mag);
-                for (int d2 = 0; d2 < 3; d2++) {
-                    velocity_ptr[dof][d2] = V_new[d2];
-                }
+            Vec3 vel;
+            if (separate_dims) {
+                vel = solve_for_dof_separate_dims(
+                    traction_vec, state, normal, rs_solver_fnc
+                );
             } else {
-                for (int d2 = 0; d2 < 3; d2++) {
-                    velocity_ptr[dof][d2] = 0.0;
-                }
+                vel = solve_for_dof_mag(
+                    traction_vec, state, normal, rs_solver_fnc
+                );
+            }
+            for (int d2 = 0; d2 < 3; d2++) {
+                velocity_ptr[dof][d2] = vel[d2];
             }
         }
     }
 }
 
+//TODO: should this be here?
 void to_pts(size_t n_pts, NPArray<long> tris, NPArray<double> vec_dofs, 
     NPArray<double> vec_verts)
 {

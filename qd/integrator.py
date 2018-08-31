@@ -41,7 +41,7 @@ class Integrator:
     def step_idx(self):
         return len(self.h_t)
 
-    def integrate(self, n_steps, until = None, display_fnc = None):
+    def integrate(self, n_steps, until = None, display_fnc = None, display_interval = 1):
         if display_fnc is None:
             display_fnc = display_model_time
 
@@ -52,7 +52,8 @@ class Integrator:
             self.h_t.append(self.rk45.t)
             self.h_y.append(self.rk45.y.copy())
 
-            display_fnc(self)
+            if i % display_interval == 0:
+                display_fnc(self)
             self.data_handler.stepped(self)
 
 

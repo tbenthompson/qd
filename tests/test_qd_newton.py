@@ -61,7 +61,7 @@ def test_rate_state_solver():
     fV2[:] = 0.0
     qd_newton.rate_state_solver(
         tri_normals, traction, state, fV2, a, eta, V0,
-        additional_normal_stress, 1e-12, 50
+        additional_normal_stress, 1e-12, 50, 3, False
     )
     np.testing.assert_almost_equal(fV2, V_new_correct)
 
@@ -73,6 +73,6 @@ def test_rate_state_solver_zero_tau():
     V[:] = 0.0
     qd_newton.rate_state_solver(
         tri_normals, 0 * traction, state, V, eta, a, V0,
-        additional_normal_stress, 1e-12, 50
+        additional_normal_stress, 1e-12, 50, 3, False
     )
     assert(not np.any(np.isnan(V)))

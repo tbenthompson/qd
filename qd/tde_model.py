@@ -1,15 +1,10 @@
-import logging
 import numpy as np
 
-import tectosaur.mesh.mesh_gen
 from tectosaur.mesh.combined_mesh import CombinedMesh
-from tectosaur.util.geometry import unscaled_normals
-from tectosaur.constraint_builders import free_edge_constraints
-from tectosaur.constraints import build_constraint_matrix
+from .tde_ops import tde_matrix, get_tde_slip_to_traction
+from .helpers import tri_normal_info
 
-from .ops import get_slip_to_traction, get_slip_to_traction_regularized
-
-class FullspaceModel:
+class TDEModel:
     def __init__(self, m, cfg):
         self.cfg = cfg
         self.setup_mesh(m)
@@ -17,9 +12,15 @@ class FullspaceModel:
         self.calc_derived_constants()
 
     @property
+    def tde_matrix(self):
+        if getattr(self, '_tde_matrix', None) is None:
+            self._tde_matrix = tde_matrix(self)
+        return self._tde_matrix
+
+    @property
     def slip_to_traction(self):
         if getattr(self, '_slip_to_traction', None) is None:
-            self._slip_to_traction = get_slip_to_traction_regularized(self.m, self.cfg)
+            self._slip_to_traction = get_tde_slip_to_traction(self.tde_matrix, self.cfg)
         return self._slip_to_traction
 
     def setup_mesh(self, m):
@@ -27,34 +28,22 @@ class FullspaceModel:
             self.m = m
         else:
             self.m = CombinedMesh.from_named_pieces([('fault', m)])
-
-        self.unscaled_tri_normals = unscaled_normals(self.m.pts[self.m.tris])
-        self.tri_size = np.linalg.norm(self.unscaled_tri_normals, axis = 1)
-        self.tri_normals = self.unscaled_tri_normals / self.tri_size[:, np.newaxis]
+        self.unscaled_normals, self.tri_size, self.tri_normals = \
+            tri_normal_info(self.m)
+        self.tri_centers = np.mean(self.m.pts[self.m.tris], axis = 1)
 
         self.n_tris = self.m.tris.shape[0]
-        self.basis_dim = 3
+        self.basis_dim = 1
         self.n_dofs = self.basis_dim * self.n_tris
 
     def setup_edge_bcs(self):
-        cs = free_edge_constraints(self.m.get_tris('fault'))
-        cm, c_rhs = build_constraint_matrix(cs, self.m.n_dofs('fault'))
-
-        constrained_slip = np.ones(cm.shape[1])
-        self.ones_interior = cm.dot(constrained_slip)
-        self.field_100_interior = self.ones_interior.copy()
-        self.field_100_interior.reshape(-1,3)[:,1] = 0.0
-        self.field_100_interior.reshape(-1,3)[:,2] = 0.0
-
+        self.ones_interior = np.ones(self.n_tris * 3)
+        self.field_100_interior = np.zeros(self.n_tris * 3)
+        self.field_100_interior.reshape(-1,3)[:,0] = 1.0
         self.field_100 = self.field_100_interior.copy()
-        self.field_100.reshape(-1,3)[:,0] = 1.0
         self.field_100_edges = self.field_100 - self.field_100_interior
 
     def calc_derived_constants(self):
-        if type(self.cfg['tectosaur_cfg']['log_level']) is str:
-            log_level = getattr(logging, self.cfg['tectosaur_cfg']['log_level'])
-            self.cfg['tectosaur_cfg']['log_level'] = log_level
-
         # Shear wave speed (m/s)
         self.cfg['cs'] = np.sqrt(self.cfg['sm'] / self.cfg['density'])
 
