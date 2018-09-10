@@ -11,3 +11,4 @@ from .data import MonolithicDataSaver, ChunkedDataSaver, load
 from .derivs import init_zero_slip, init_creep
 from .basis_convert import constant_to_linear
 from .plotting import display_full_model_state
+from .helpers import jupyter_beep
