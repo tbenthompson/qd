@@ -7,7 +7,7 @@ from tectosaur.util.geometry import unscaled_normals
 from tectosaur.constraint_builders import free_edge_constraints
 from tectosaur.constraints import build_constraint_matrix
 
-from .ops import get_slip_to_traction, get_slip_to_traction_regularized
+from .ops_full_regularized import get_slip_to_traction_regularized
 
 class FullspaceModel:
     def __init__(self, m, cfg):
