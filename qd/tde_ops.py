@@ -30,9 +30,7 @@ def tde_stress_matrix(model):
     ).reshape((model.n_tris, 3 * model.n_tris, 6))
     return stress
 
-def tde_matrix(model):
-    stress = tde_stress_matrix(model)
-
+def stress_to_traction(normals, stress):
     # map from 6 component symmetric to 9 component full tensor
     components = [
         [0, 3, 4],
@@ -41,13 +39,17 @@ def tde_matrix(model):
     ]
     traction = np.array([
         np.sum([
-            stress[:,:,components[i][j]] * model.tri_normals[:,j,np.newaxis]
+            stress[:,:,components[i][j]] * normals[:,j,np.newaxis]
             for j in range(3)
         ], axis = 0) for i in range(3)
     ])
     traction = np.swapaxes(traction, 0, 1)
     traction = traction.reshape((model.n_tris * 3, model.n_tris * 3))
     return traction
+
+def tde_matrix(model):
+    stress = tde_stress_matrix(model)
+    return stress_to_traction(model.tri_normals, stress)
 
 def get_tde_slip_to_traction(tde_matrix, qd_cfg):
     def slip_to_traction(slip):
