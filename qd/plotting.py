@@ -14,7 +14,7 @@ from .data import skip_existing_prefixed_folders
 from .basis_convert import dofs_to_pts
 
 def plot_fields(model, field, levels = None, cmap = 'seismic',
-        symmetric_scale = False, ds = None, figsize = None):
+        symmetric_scale = False, ds = None, figsize = None, dims = [0,2]):
 
     field_reshape = field.reshape((model.n_dofs, -1))
     n_fields = field_reshape.shape[1]
@@ -23,7 +23,7 @@ def plot_fields(model, field, levels = None, cmap = 'seismic',
         figsize = (6 * n_fields,5)
     plt.figure(figsize = figsize)
 
-    plot_f = dofs_to_pts(model, field_reshape)
+    plot_f = dofs_to_pts(model.m.pts, model.m.tris, model.basis_dim, field_reshape)
     for d in (range(n_fields) if ds is None else ds):
         plt.subplot(1, n_fields, d + 1)
 
@@ -32,7 +32,7 @@ def plot_fields(model, field, levels = None, cmap = 'seismic',
             f_levels = get_levels(plot_f[:,d], symmetric_scale)
 
         cntf = plt.tricontourf(
-            model.m.pts[:,0], model.m.pts[:,2], model.m.tris, plot_f[:,d],
+            model.m.pts[:,dims[0]], model.m.pts[:,dims[1]], model.m.tris, plot_f[:,d],
             cmap = cmap, levels = f_levels, extend = 'both'
         )
         plt.colorbar(cntf)
@@ -104,11 +104,11 @@ class QDPlotData:
         plt.figure(figsize = (16,16))
         plt.subplot(221)
         plt.plot(self.t_years[1:], self.min_state[1:])
-        plt.xlabel('step')
+        plt.xlabel('t')
         plt.ylabel('$\min(\Psi)$')
         plt.subplot(222)
         plt.plot(self.t_years[1:], np.log10(np.abs(self.max_V[1:]) + 1e-40))
-        plt.xlabel('step')
+        plt.xlabel('t')
         plt.ylabel('$\log_{10}(\max(\|V_x\|))$')
         plt.subplot(223)
         plt.plot(self.t_years[1:])
@@ -132,7 +132,8 @@ class QDPlotData:
         cax = div.append_axes('right', '5%', '5%')
 
         pt_field = dofs_to_pts(
-            self.model, field.reshape(-1, 1)
+            self.model.m.pts, self.model.m.tris, self.model.basis_dim,
+            field.reshape(-1, 1)
         )[:,0]
 
         color_plot = ax.tricontourf(

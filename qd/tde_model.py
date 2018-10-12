@@ -38,10 +38,15 @@ class TDEModel:
 
     def setup_edge_bcs(self):
         self.ones_interior = np.ones(self.n_tris * 3)
-        self.field_100_interior = np.zeros(self.n_tris * 3)
-        self.field_100_interior.reshape(-1,3)[:,0] = 1.0
-        self.field_100 = self.field_100_interior.copy()
-        self.field_100_edges = self.field_100 - self.field_100_interior
+        self.field_inslipdir_interior = np.empty(self.n_tris * 3)
+        for d in range(3):
+            val = self.cfg.get('slipdir', (1.0, 0.0, 0.0))[d]
+            self.field_inslipdir_interior.reshape(-1,3)[:,d] = val
+
+        self.field_inslipdir = self.field_inslipdir_interior.copy()
+        self.field_inslipdir_edges = (
+            self.field_inslipdir - self.field_inslipdir_interior
+        )
 
     def calc_derived_constants(self):
         # Shear wave speed (m/s)

@@ -19,14 +19,14 @@ def separate_slip_state(y):
 
 def get_plate_motion(model, t):
     dist = t * model.cfg['plate_rate']
-    return dist * model.field_100
+    return dist * model.field_inslipdir
 
 def get_slip_deficit(model, t, slip):
     out = model.ones_interior * (get_plate_motion(model, t).reshape(-1) - slip)
     return out
 
 def rate_state_solve(model, traction, state):
-    V = np.empty_like(model.field_100)
+    V = np.empty_like(model.field_inslipdir)
     newton.rate_state_solver(
         model.tri_normals, traction, state, V,
         model.cfg['a'], model.cfg['eta'], model.cfg['V0'],
@@ -35,7 +35,7 @@ def rate_state_solve(model, traction, state):
         model.cfg.get('rs_separate_dims', False)
     )
     return (
-        model.field_100_edges * model.cfg['plate_rate']
+        model.field_inslipdir_edges * model.cfg['plate_rate']
         + model.ones_interior * V
     )
 
@@ -70,7 +70,7 @@ def init_creep(model, traction_to_slip):
     state_i = fsolve(f, 0.7)[0]
     sigma_n = model.cfg['additional_normal_stress']
     tau_i = newton.F(V_i, sigma_n, state_i, model.cfg['a'][0], model.cfg['V0'])
-    init_traction = tau_i * model.field_100_interior
+    init_traction = tau_i * model.field_inslipdir_interior
     init_slip_deficit = traction_to_slip(init_traction)
     init_state =  state_i * np.ones((model.n_dofs))
     return 0, -init_slip_deficit, init_state

@@ -7,7 +7,7 @@ from tectosaur.util.geometry import unscaled_normals
 from tectosaur.constraint_builders import free_edge_constraints
 from tectosaur.constraints import build_constraint_matrix
 
-from .ops_full_regularized import get_slip_to_traction_regularized
+from .ops_full import get_slip_to_traction
 
 class FullspaceModel:
     def __init__(self, m, cfg):
@@ -19,7 +19,7 @@ class FullspaceModel:
     @property
     def slip_to_traction(self):
         if getattr(self, '_slip_to_traction', None) is None:
-            self._slip_to_traction = get_slip_to_traction_regularized(self.m, self.cfg)
+            self._slip_to_traction = get_slip_to_traction(self.m, self.cfg)
         return self._slip_to_traction
 
     def setup_mesh(self, m):
@@ -42,13 +42,17 @@ class FullspaceModel:
 
         constrained_slip = np.ones(cm.shape[1])
         self.ones_interior = cm.dot(constrained_slip)
-        self.field_100_interior = self.ones_interior.copy()
-        self.field_100_interior.reshape(-1,3)[:,1] = 0.0
-        self.field_100_interior.reshape(-1,3)[:,2] = 0.0
 
-        self.field_100 = self.field_100_interior.copy()
-        self.field_100.reshape(-1,3)[:,0] = 1.0
-        self.field_100_edges = self.field_100 - self.field_100_interior
+        self.field_inslipdir_interior = self.ones_interior.copy()
+        self.field_inslipdir = self.field_inslipdir_interior.copy()
+        for d in range(3):
+            val = self.cfg.get('slipdir', (1.0, 0.0, 0.0))[d]
+            self.field_inslipdir_interior.reshape(-1,3)[:,d] *= val
+            self.field_inslipdir.reshape(-1,3)[:,d] = val
+
+        self.field_inslipdir_edges = (
+            self.field_inslipdir - self.field_inslipdir_interior
+        )
 
     def calc_derived_constants(self):
         if type(self.cfg['tectosaur_cfg']['log_level']) is str:
