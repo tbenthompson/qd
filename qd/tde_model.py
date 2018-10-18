@@ -18,6 +18,12 @@ class TDEModel:
         return self._tde_matrix
 
     @property
+    def inv_tde_matrix(self):
+        if getattr(self, '_inv_tde_matrix', None) is None:
+            self._inv_tde_matrix = np.linalg.inv(self.tde_matrix)
+        return self._inv_tde_matrix
+
+    @property
     def slip_to_traction(self):
         if getattr(self, '_slip_to_traction', None) is None:
             self._slip_to_traction = get_tde_slip_to_traction(self.tde_matrix, self.cfg)

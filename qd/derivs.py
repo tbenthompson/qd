@@ -25,6 +25,15 @@ def get_slip_deficit(model, t, slip):
     out = model.ones_interior * (get_plate_motion(model, t).reshape(-1) - slip)
     return out
 
+def pt_average(pts, tris, field):
+    avg_field = np.empty_like(field)
+    for i in range(pts.shape[0]):
+        tri_idxs, corner_idxs = np.where(tris == i)
+        idxs = tri_idxs * 3 + corner_idxs
+        val = np.mean(field[idxs])
+        avg_field[idxs] = val
+    return avg_field
+
 def rate_state_solve(model, traction, state):
     V = np.empty_like(model.field_inslipdir)
     newton.rate_state_solver(
@@ -34,9 +43,19 @@ def rate_state_solve(model, traction, state):
         1e-12, 50, int(model.n_dofs / model.n_tris),
         model.cfg.get('rs_separate_dims', False)
     )
+
+    if model.basis_dim == 1:
+        ptavg_V = V
+    else:
+        ptavg_V = np.empty_like(V)
+        for d in range(3):
+            ptavg_V.reshape((-1,3))[:,d] = pt_average(
+                model.m.pts, model.m.tris, V.reshape((-1,3))[:,d]
+            )
+
     return (
         model.field_inslipdir_edges * model.cfg['plate_rate']
-        + model.ones_interior * V
+        + model.ones_interior * ptavg_V
     )
 
 # State evolution law -- aging law.
