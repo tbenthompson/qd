@@ -40,12 +40,13 @@ def get_slip_to_traction(m, qd_cfg):
     constrained_traction_mass_op = cm2.T.dot(traction_mass_op.mat.dot(cm2))
 
     def slip_to_traction(slip):
-        # t = Timer()
+        t = Timer()
         rhs = -hypersingular_op.dot(slip)
-        # t.report('H.dot')
+        t.report('H.dot')
         out = cm2.dot(spsolve(constrained_traction_mass_op, cm2.T.dot(rhs)))
+        t.report('spsolve')
 
-        if qd_cfg['only_x']:
+        if qd_cfg.get('only_x', False):
             out.reshape((-1,3))[:,1] = 0.0
             out.reshape((-1,3))[:,2] = 0.0
         return qd_cfg['sm'] * out

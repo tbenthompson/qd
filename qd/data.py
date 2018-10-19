@@ -74,9 +74,8 @@ class ChunkedDataSaver:
 
 
 class ChunkedDataLoader:
-    def __init__(self, folder_name, basis_dim):
+    def __init__(self, folder_name):
         self.folder_name = folder_name
-        self.basis_dim = basis_dim
         self.idxs = []
         self.ts = None
         self.ys = None
@@ -88,6 +87,9 @@ class ChunkedDataLoader:
         self.m, self.cfg, self.init_conditions = np.load(
             initial_data_path(self.folder_name)
         )
+        n_dofs = self.init_conditions[1].shape[0]
+        n_tris = self.m.tris.shape[0]
+        self.basis_dim = n_dofs // n_tris // 3
 
     def load_new_files(self):
         new_idxs = []
@@ -120,5 +122,5 @@ class ChunkedDataLoader:
 
         self.idxs += new_idxs
 
-def load(folder_name, basis_dim):
-    return ChunkedDataLoader(folder_name, basis_dim)
+def load(folder_name):
+    return ChunkedDataLoader(folder_name)

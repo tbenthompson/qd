@@ -5,15 +5,16 @@ from .helpers import tri_normal_info
 
 def build_xyz_slip_inputs(model):
     tensile_slip_vec = model.tri_normals
-    dip_slip_vec = np.cross([1,0,0], tensile_slip_vec)
-    strike_slip_vec = np.cross(tensile_slip_vec, dip_slip_vec)
+    assert(np.all(np.abs(tensile_slip_vec.dot([0,0,1])) < (1.0 - 1e-7)))
+    strike_slip_vec = np.cross(tensile_slip_vec, [0,0,-1.0])
+    dip_slip_vec = np.cross(tensile_slip_vec, strike_slip_vec)
     slip = np.zeros((model.n_tris, 3, 3))
     for d in range(3):
         v = np.zeros(3)
         v[d] = 1.0
-        slip[:, d, 0] = strike_slip_vec.dot(v)
-        slip[:, d, 1] = dip_slip_vec.dot(v)
-        slip[:, d, 2] = tensile_slip_vec.dot(v)
+        slip[:, d, 0] = -strike_slip_vec.dot(v)
+        slip[:, d, 1] = -dip_slip_vec.dot(v)
+        slip[:, d, 2] = -tensile_slip_vec.dot(v)
     slip = slip.reshape((-1, 3))
     return slip
 
@@ -44,8 +45,7 @@ def stress_to_traction(normals, stress):
         ], axis = 0) for i in range(3)
     ])
     traction = np.swapaxes(traction, 0, 1)
-    total_entries = traction.reshape(-1).shape[0]
-    rows_cols = int(np.sqrt(total_entries))
+    rows_cols = int(np.sqrt(traction.size))
     traction = traction.reshape((rows_cols, rows_cols))
     return traction
 
@@ -56,7 +56,7 @@ def tde_matrix(model):
 def get_tde_slip_to_traction(tde_matrix, qd_cfg):
     def slip_to_traction(slip):
         out = tde_matrix.dot(slip)
-        if qd_cfg['only_x']:
+        if qd_cfg.get('only_x', False):
             out.reshape((-1,3))[:,1] = 0.0
             out.reshape((-1,3))[:,2] = 0.0
         return out
@@ -77,10 +77,11 @@ def get_tde_traction_to_slip_iterative(tde_matrix):
     return traction_to_slip
 
 def get_tde_traction_to_slip_direct(tde_matrix):
+    print('inverting tde matrix!')
     inverse_tde_matrix = np.linalg.inv(tde_matrix)
     def traction_to_slip(traction):
         return inverse_tde_matrix.dot(traction)
     return traction_to_slip
 
 def get_tde_traction_to_slip(tde_matrix):
-    return get_tde_traction_to_slip_iterative(tde_matrix)
+    return get_tde_traction_to_slip_direct(tde_matrix)
