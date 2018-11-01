@@ -6,12 +6,17 @@ from tectosaur.mesh.combined_mesh import CombinedMesh
 from tectosaur.util.geometry import unscaled_normals
 from tectosaur.constraint_builders import free_edge_constraints
 from tectosaur.constraints import build_constraint_matrix
+from tectosaur.util.timer import Timer
 
 from .ops_full import get_slip_to_traction
 
 class FullspaceModel:
     def __init__(self, m, cfg):
         self.cfg = cfg
+        self.cfg['Timer'] = self.cfg.get(
+            'Timer',
+            lambda: Timer(output_fnc = lambda x: None)
+        )
         self.setup_mesh(m)
         self.setup_edge_bcs()
         self.calc_derived_constants()

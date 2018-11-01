@@ -2,12 +2,22 @@ import os
 from IPython import get_ipython
 import matplotlib.pyplot as plt
 
-def configure(gpu_idx = 0, fast_plot = True):
+def configure(gpu_idx = 0, fast_plot = True, n_omp_threads = None):
     set_gpu(gpu_idx)
     if fast_plot:
         configure_mpl_fast()
     else:
         configure_mpl_pretty()
+    configure_omp(n_omp_threads)
+
+def configure_omp(n_omp_threads):
+    var = 'OMP_NUM_THREADS'
+    if n_omp_threads is None:
+        if var in os.environ:
+            del os.environ[var]
+    else:
+        os.environ[var] = str(n_omp_threads)
+
 
 def set_gpu(idx):
     os.environ['CUDA_DEVICE'] = str(idx)

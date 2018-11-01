@@ -1,6 +1,7 @@
 import os
 
 import numpy as np
+import cloudpickle
 
 """
 Don't save anything!
@@ -52,13 +53,14 @@ class ChunkedDataSaver:
         os.makedirs(self.folder_name)
 
     def initialized(self, integrator):
-        np.save(
-            initial_data_path(self.folder_name),
-            np.array([
-                integrator.model.m, integrator.model.cfg,
-                integrator.init_conditions
-            ], dtype = np.object)
-        )
+        with open(initial_data_path(self.folder_name), 'wb') as f:
+            cloudpickle.dump(
+                np.array([
+                    integrator.model.m, integrator.model.cfg,
+                    integrator.init_conditions
+                ], dtype = np.object),
+                f
+            )
 
     def stepped(self, integrator):
         step_idx = integrator.step_idx()
@@ -84,9 +86,8 @@ class ChunkedDataLoader:
         self.load_new_files()
 
     def load_initial_data(self):
-        self.m, self.cfg, self.init_conditions = np.load(
-            initial_data_path(self.folder_name)
-        )
+        with open(initial_data_path(self.folder_name), 'rb') as f:
+            self.m, self.cfg, self.init_conditions = cloudpickle.load(f)
         n_dofs = self.init_conditions[1].shape[0]
         n_tris = self.m.tris.shape[0]
         self.basis_dim = n_dofs // n_tris // 3
