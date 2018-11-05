@@ -99,6 +99,28 @@ class QDPlotData:
                 self.V[i] = (self.slip[i] - self.slip[i - 1]) / self.dt[i]
             self.max_V[i] = np.max(self.V[i])
 
+    def simple_data_file(self, filename):
+        slip_at_pts = []
+        state_at_pts = []
+        for i in range(len(qdp.slip)):
+            slip_at_pts.append(qd.dofs_to_pts(
+                qdp.model.m.pts, qdp.model.m.tris, qdp.model.basis_dim,
+                qdp.slip[i].reshape((-1,3))
+            ))
+            state_at_pts.append(qd.dofs_to_pts(
+                qdp.model.m.pts, qdp.model.m.tris, qdp.model.basis_dim,
+                qdp.state[i].reshape((-1,1))
+            ))
+        slip_at_pts = np.array(slip_at_pts)
+        state_at_pts = np.array(state_at_pts)[:,:,0]
+        np.save(
+            filename,
+            (
+                qdp.model.m.pts, qdp.model.m.tris,
+                qdp.t, slip_at_pts, state_at_pts
+            )
+        )
+
     def summary(self):
         print('plotting', np.max(self.t_years), 'years and', self.n_steps, 'time steps of data')
         plt.figure(figsize = (16,16))
@@ -121,7 +143,8 @@ class QDPlotData:
         plt.show()
 
     def nicefig(self, field, levels, contour_levels, cmap,
-            t_years = None, filepath = None, figsize = (10,8)):
+            t_years = None, filepath = None, figsize = (10,8),
+            dim = [0,2]):
         contour_levels = levels[::3]
 
         is_tde = field.size == self.model.m.tris.shape[0]
@@ -137,23 +160,35 @@ class QDPlotData:
         )[:,0]
 
         color_plot = ax.tricontourf(
-            self.model.m.pts[:,0], self.model.m.pts[:,2], self.model.m.tris,
+            self.model.m.pts[:,dim[0]], self.model.m.pts[:,dim[1]], self.model.m.tris,
             pt_field, cmap = cmap, levels = levels, extend = 'both'
         )
         ax.tricontour(
-            self.model.m.pts[:,0], self.model.m.pts[:,2], self.model.m.tris,
+            self.model.m.pts[:,dim[0]], self.model.m.pts[:,dim[1]], self.model.m.tris,
             pt_field, levels = contour_levels, extend = 'both',
             linestyles = 'solid', linewidths = 0.75,
             colors = ['#FFFFFF'] * contour_levels.shape[0]
         )
 
-        ax.set_aspect('equal', adjustable='box')
-        minpt = np.min(self.model.m.pts, axis = 1)
-        maxpt = np.max(self.model.m.pts, axis = 1)
-        ax.set_xlim([minpt[0], maxpt[1]])
-        ax.set_ylim([minpt[1], maxpt[1]])
+        minpt = np.min(self.model.m.pts, axis = 0)
+        maxpt = np.max(self.model.m.pts, axis = 0)
+        width = maxpt - minpt
 
-        text_pos = (minpt[0], maxpt[1] + (maxpt[1] - minpt[1]) * 0.003)
+        F = 0.03
+        ax.set_xlim([
+            minpt[dim[0]] - width[dim[0]] * F,
+            maxpt[dim[0]] + width[dim[0]] * F
+        ])
+        ax.set_ylim([
+            minpt[dim[1]] - width[dim[1]] * F,
+            maxpt[dim[1]] + width[dim[1]] * F
+        ])
+        ax.set_aspect('equal', adjustable='box')
+
+        text_pos = (
+            minpt[dim[0]],
+            maxpt[dim[1]] + (maxpt[dim[1]] - minpt[dim[1]]) * 0.003
+        )
         if t_years is not None:
             ax.text(text_pos[0], text_pos[1], '%.9f' % t_years)
 

@@ -44,7 +44,9 @@ def stress_to_traction(normals, stress):
         ], axis = 0) for i in range(3)
     ])
     traction = np.swapaxes(traction, 0, 1)
-    traction = traction.reshape((model.n_tris * 3, model.n_tris * 3))
+    total_entries = traction.reshape(-1).shape[0]
+    rows_cols = int(np.sqrt(total_entries))
+    traction = traction.reshape((rows_cols, rows_cols))
     return traction
 
 def tde_matrix(model):
@@ -63,9 +65,14 @@ def get_tde_slip_to_traction(tde_matrix, qd_cfg):
 def get_tde_traction_to_slip_iterative(tde_matrix):
     solver_tol = 1e-7
     def traction_to_slip(traction):
+        def f(x):
+            print('residual: ' + str(x))
+            print(f.iter)
+            f.iter += 1
+        f.iter = 0
         return scipy.sparse.linalg.gmres(
             tde_matrix, traction, tol = solver_tol,
-            restart = 500
+            restart = 500, callback = f
         )[0]
     return traction_to_slip
 
