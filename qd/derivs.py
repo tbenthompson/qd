@@ -2,6 +2,7 @@ import numpy as np
 from scipy.optimize import fsolve
 
 import cppimport.import_hook
+from .pt_average import pt_averageD
 from . import newton
 
 def make_derivs(model):
@@ -35,6 +36,7 @@ def pt_average(pts, tris, field):
     return avg_field
 
 def rate_state_solve(model, traction, state):
+    timer = model.cfg['Timer']()
     V = np.empty_like(model.field_inslipdir)
     newton.rate_state_solver(
         model.tri_normals, traction, state, V,
@@ -43,17 +45,24 @@ def rate_state_solve(model, traction, state):
         1e-12, 50, int(model.n_dofs / model.n_tris),
         model.cfg.get('rs_separate_dims', False)
     )
+    timer.report('newton')
 
-    ptavg_V = np.empty_like(V)
-    for d in range(3):
-        ptavg_V.reshape((-1,3))[:,d] = pt_average(
-            model.m.pts, model.m.tris, V.reshape((-1,3))[:,d]
-        )
+    if model.basis_dim == 1:
+        ptavg_V = V
+    else:
+        ptavg_V = np.empty_like(V)
+        for d in range(3):
+            ptavg_V.reshape((-1,3))[:,d] = pt_averageD(
+                model.m.pts, model.m.tris, V.reshape((-1,3))[:,d].copy()
+            )
+    timer.report('pt avg')
 
-    return (
+    out = (
         model.field_inslipdir_edges * model.cfg['plate_rate']
         + model.ones_interior * ptavg_V
     )
+    timer.report('rate_state_solve --> out')
+    return out
 
 # State evolution law -- aging law.
 def aging_law(cfg, V, state):
@@ -66,11 +75,17 @@ def state_evolution(cfg, V, state):
     return aging_law(cfg, V_mag, state)
 
 def solve_for_full_state(model, t, y):
+    timer = model.cfg['Timer']()
     slip, state = separate_slip_state(y)
+    timer.report('separate_slip_state')
     slip_deficit = get_slip_deficit(model, t, slip)
+    timer.report('get_slip_deficit')
     traction = model.slip_to_traction(slip_deficit)
+    timer.report('slip_to_traction')
     V = rate_state_solve(model, traction, state)
+    timer.report('rate_state_solve')
     dstatedt = state_evolution(model.cfg, V, state)
+    timer.report('state_evolution')
     return slip, slip_deficit, state, traction, V, dstatedt
 
 def init_zero_slip(model):

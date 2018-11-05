@@ -7,6 +7,7 @@ def dofs_to_pts(pts, tris, basis_dim, field):
         return linear_basis_to_pts(pts, tris, field)
 
 def linear_basis_to_pts(pts, tris, field):
+    # Assumes continuity!
     n_fields = field.shape[1]
     pt_field = np.empty((pts.shape[0], n_fields))
     pt_field[tris] = field.reshape((-1, 3, n_fields))

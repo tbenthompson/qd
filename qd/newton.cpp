@@ -3,7 +3,8 @@
 import os
 import tectosaur
 setup_pybind11(cfg)
-cfg['compiler_args'] += ['-std=c++14', '-O3']
+cfg['compiler_args'] += ['-std=c++14', '-O3', '-fopenmp']
+cfg['linker_args'] += ['-fopenmp']
 cfg['include_dirs'] += [os.path.join(tectosaur.source_dir, os.pardir)]
 %>
 */
@@ -123,6 +124,7 @@ void rate_state_solver(NPArray<double> tri_normals, NPArray<double> traction,
 
     size_t n_tris = tri_normals.request().shape[0];
 
+    #pragma omp parallel for
     for (size_t i = 0; i < n_tris; i++) {
         auto normal = tri_normals_ptr[i];
         for (int d = 0; d < basis_dim; d++) {
