@@ -8,33 +8,36 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from . import siay
 from .derivs import separate_slip_state, solve_for_full_state
-from .tde_model import TDEModel
-from .model import FullspaceModel
 from .data import skip_existing_prefixed_folders
 from .basis_convert import dofs_to_pts
 
-def plot_fields(model, field, levels = None, cmap = 'seismic',
+def plot_fields(model, field, which = 'fault', levels = None, cmap = 'seismic',
         symmetric_scale = False, ds = None, figsize = None, dims = [0,2]):
 
-    field_reshape = field.reshape((model.n_dofs, -1))
+    field_reshape = field.reshape((model.m.n_tris(which) * 3, -1))
     n_fields = field_reshape.shape[1]
 
     if figsize is None:
         figsize = (6 * n_fields,5)
     plt.figure(figsize = figsize)
 
-    plot_f = dofs_to_pts(model.m.pts, model.m.tris, model.basis_dim, field_reshape)
+    which_tris = model.m.get_tris(which)
+    plot_f = dofs_to_pts(model.m.pts, which_tris, model.basis_dim, field_reshape)
+    which_pts_idxs = np.unique(which_tris)
+    which_pts = model.m.pts[which_pts_idxs]
     for d in (range(n_fields) if ds is None else ds):
         plt.subplot(1, n_fields, d + 1)
 
         f_levels = levels
         if f_levels is None:
-            f_levels = get_levels(plot_f[:,d], symmetric_scale)
+            f_levels = get_levels(plot_f[which_pts_idxs,d], symmetric_scale)
 
         cntf = plt.tricontourf(
-            model.m.pts[:,dims[0]], model.m.pts[:,dims[1]], model.m.tris, plot_f[:,d],
+            model.m.pts[:,dims[0]], model.m.pts[:,dims[1]], which_tris, plot_f[:,d],
             cmap = cmap, levels = f_levels, extend = 'both'
         )
+        plt.xlim([np.min(which_pts[:,dims[0]]), np.max(which_pts[:,dims[0]])])
+        plt.ylim([np.min(which_pts[:,dims[1]]), np.max(which_pts[:,dims[1]])])
         plt.colorbar(cntf)
     plt.show()
 
@@ -73,15 +76,12 @@ def display_full_model_state(integrator, plotter = plot_fields):
     plot_setting(integrator.h_t[-1], integrator.h_y[-1], integrator.model, plotter)
 
 class QDPlotData:
-    def __init__(self, data):
+    def __init__(self, data, model_type):
         self.data = data
         self.cfg = self.data.cfg
         self.t = self.data.ts
         self.y = self.data.ys
-        if data.basis_dim == 1:
-            self.model = TDEModel(self.data.m, self.cfg)
-        else:
-            self.model = FullspaceModel(self.data.m, self.cfg)
+        self.model = model_type(self.data.m, self.cfg)
         self.t_years = self.t / siay
 
         self.n_steps = self.y.shape[0]

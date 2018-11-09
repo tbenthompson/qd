@@ -1,15 +1,19 @@
 import numpy as np
+import scipy.sparse.linalg
+
+import cutde.fullspace
 
 from tectosaur.mesh.combined_mesh import CombinedMesh
-from .tde_ops import tde_matrix, get_tde_slip_to_traction
 from .helpers import tri_normal_info
+
+from .model_helpers import calc_derived_constants
 
 class TDEModel:
     def __init__(self, m, cfg):
+        cfg = calc_derived_constants(cfg)
         self.cfg = cfg
         self.setup_mesh(m)
         self.setup_edge_bcs()
-        self.calc_derived_constants()
 
     @property
     def tde_matrix(self):
@@ -54,34 +58,85 @@ class TDEModel:
             self.field_inslipdir - self.field_inslipdir_interior
         )
 
-    def calc_derived_constants(self):
-        # Shear wave speed (m/s)
-        self.cfg['cs'] = np.sqrt(self.cfg['sm'] / self.cfg['density'])
+def build_xyz_slip_inputs(model):
+    tensile_slip_vec = model.tri_normals
+    assert(np.all(np.abs(tensile_slip_vec.dot([0,0,1])) < (1.0 - 1e-7)))
+    strike_slip_vec = np.cross(tensile_slip_vec, [0,0,-1.0])
+    dip_slip_vec = np.cross(tensile_slip_vec, strike_slip_vec)
+    slip = np.zeros((model.n_tris, 3, 3))
+    for d in range(3):
+        v = np.zeros(3)
+        v[d] = 1.0
+        slip[:, d, 0] = -strike_slip_vec.dot(v)
+        slip[:, d, 1] = -dip_slip_vec.dot(v)
+        slip[:, d, 2] = -tensile_slip_vec.dot(v)
+    slip = slip.reshape((-1, 3))
+    return slip
 
-        # The radiation damping coefficient (kg / (m^2 * s))
-        self.cfg['eta'] = self.cfg['sm'] / (2 * self.cfg['cs'])
+def tde_stress_matrix(model):
+    tri_pts = model.m.pts[model.m.tris]
+    tri_pts_3 = np.repeat(tri_pts, 3, axis = 0)
+    slip = build_xyz_slip_inputs(model)
+    all_strains = cutde.fullspace.clu_strain_all_pairs(
+        model.tri_centers, tri_pts_3, slip, model.cfg['pr']
+    )
+    stress = cutde.fullspace.strain_to_stress(
+        all_strains.reshape((-1, 6)),
+        model.cfg['sm'], model.cfg['pr']
+    ).reshape((model.n_tris, 3 * model.n_tris, 6))
+    return stress
 
-    def print_length_scales(self):
-        sigma_n = self.cfg['additional_normal_stress']
+def stress_to_traction(normals, stress):
+    # map from 6 component symmetric to 9 component full tensor
+    components = [
+        [0, 3, 4],
+        [3, 1, 5],
+        [4, 5, 2]
+    ]
+    traction = np.array([
+        np.sum([
+            stress[:,:,components[i][j]] * normals[:,j,np.newaxis]
+            for j in range(3)
+        ], axis = 0) for i in range(3)
+    ])
+    traction = np.swapaxes(traction, 0, 1)
+    rows_cols = int(np.sqrt(traction.size))
+    traction = traction.reshape((rows_cols, rows_cols))
+    return traction
 
-        self.mesh_L = np.max(np.sqrt(self.tri_size))
-        self.Lb = self.cfg['sm'] * self.cfg['Dc'] / (sigma_n * self.cfg['b'])
+def tde_matrix(model):
+    stress = tde_stress_matrix(model)
+    return stress_to_traction(model.tri_normals, stress)
 
-        #TODO: Remove and replace with empirical version directly from matrix.
-        self.hstar = (
-            (np.pi * self.cfg['sm'] * self.cfg['Dc']) /
-            (sigma_n * (self.cfg['b'] - self.cfg['a']))
-        )
-        self.hstarRA = (
-            (2.0 / np.pi) * self.cfg['sm'] * self.cfg['b'] * self.cfg['Dc']
-            / ((self.cfg['b'] - self.cfg['a']) ** 2 * sigma_n)
-        )
-        self.hstarRA3D = np.pi ** 2 / 4.0 * self.hstarRA
+def get_tde_slip_to_traction(tde_matrix, qd_cfg):
+    def slip_to_traction(slip):
+        out = tde_matrix.dot(slip)
+        if qd_cfg.get('only_x', False):
+            out.reshape((-1,3))[:,1] = 0.0
+            out.reshape((-1,3))[:,2] = 0.0
+        return out
+    return slip_to_traction
 
-        # all_fields = np.vstack((Lb, hstar, np.ones_like(hstar) * mesh_L)).T
-        # plot_fields(m, all_fields)
-        print('hstar (2d antiplane, erickson and dunham 2014)', np.min(np.abs(self.hstar)))
-        print('hstar_RA (2d antiplane, rubin and ampuero 2005)', np.min(np.abs(self.hstarRA)))
-        print('hstar_RA3D (3d strike slip, lapusta and liu 2009)', np.min(np.abs(self.hstarRA3D)))
-        print('cohesive zone length scale', np.min(self.Lb))
-        print('mesh length scale', self.mesh_L)
+def get_tde_traction_to_slip_iterative(tde_matrix):
+    solver_tol = 1e-7
+    def traction_to_slip(traction):
+        def f(x):
+            # print('residual: ' + str(x))
+            # print(f.iter)
+            f.iter += 1
+        f.iter = 0
+        return scipy.sparse.linalg.gmres(
+            tde_matrix, traction, tol = solver_tol,
+            restart = 500, callback = f
+        )[0]
+    return traction_to_slip
+
+def get_tde_traction_to_slip_direct(tde_matrix):
+    print('inverting tde matrix!')
+    inverse_tde_matrix = np.linalg.inv(tde_matrix)
+    def traction_to_slip(traction):
+        return inverse_tde_matrix.dot(traction)
+    return traction_to_slip
+
+def get_tde_traction_to_slip(tde_matrix):
+    return get_tde_traction_to_slip_direct(tde_matrix)

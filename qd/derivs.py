@@ -5,14 +5,6 @@ import cppimport.import_hook
 from .pt_average import pt_averageD
 from . import newton
 
-def make_derivs(model):
-    def derivs(t, y):
-        slip, slip_deficit, state, traction, V, dstatedt = solve_for_full_state(
-            model, t, y
-        )
-        return np.concatenate((V, dstatedt))
-    return derivs
-
 def separate_slip_state(y):
     n_total_dofs = y.shape[0]
     n_slip_dofs = n_total_dofs // 4 * 3
@@ -25,15 +17,6 @@ def get_plate_motion(model, t):
 def get_slip_deficit(model, t, slip):
     out = model.ones_interior * (get_plate_motion(model, t).reshape(-1) - slip)
     return out
-
-def pt_average(pts, tris, field):
-    avg_field = np.empty_like(field)
-    for i in range(pts.shape[0]):
-        tri_idxs, corner_idxs = np.where(tris == i)
-        idxs = tri_idxs * 3 + corner_idxs
-        val = np.mean(field[idxs])
-        avg_field[idxs] = val
-    return avg_field
 
 def rate_state_solve(model, traction, state):
     timer = model.cfg['Timer']()
@@ -53,7 +36,7 @@ def rate_state_solve(model, traction, state):
         ptavg_V = np.empty_like(V)
         for d in range(3):
             ptavg_V.reshape((-1,3))[:,d] = pt_averageD(
-                model.m.pts, model.m.tris, V.reshape((-1,3))[:,d].copy()
+                model.m.pts, model.m.get_tris('fault'), V.reshape((-1,3))[:,d].copy()
             )
     timer.report('pt avg')
 
@@ -94,7 +77,7 @@ def init_zero_slip(model):
     init_state = np.ones((model.m.tris.shape[0] * 3))
     return t, init_slip, init_state
 
-def init_creep(model, traction_to_slip):
+def init_creep(model):
     V_i = model.cfg['plate_rate']
     def f(state):
         return aging_law(model.cfg, V_i, state)
@@ -102,6 +85,6 @@ def init_creep(model, traction_to_slip):
     sigma_n = model.cfg['additional_normal_stress']
     tau_i = newton.F(V_i, sigma_n, state_i, model.cfg['a'][0], model.cfg['V0'])
     init_traction = tau_i * model.field_inslipdir_interior
-    init_slip_deficit = traction_to_slip(init_traction)
-    init_state =  state_i * np.ones((model.n_dofs))
+    init_slip_deficit = model.traction_to_slip(init_traction)
+    init_state =  state_i * np.ones((model.m.n_tris('fault') * 3))
     return 0, -init_slip_deficit, init_state

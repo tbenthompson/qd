@@ -3,7 +3,6 @@ import numpy as np
 from scipy.integrate import RK45
 
 from . import siay
-from .derivs import make_derivs
 from .data import ChunkedDataSaver
 from .plotting import display_model_time
 
@@ -16,7 +15,7 @@ class Integrator:
             data_handler = ChunkedDataSaver()
 
         self.model = model
-        self.derivs = make_derivs(model)
+        self.derivs = model.make_derivs()
         self.init_conditions = init_conditions
         self.h_t = []
         self.h_y = []
