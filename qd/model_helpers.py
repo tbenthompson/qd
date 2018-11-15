@@ -1,6 +1,33 @@
 import logging
 import numpy as np
 
+import tectosaur as tct
+import cppimport.import_hook
+from .pt_average import pt_averageD
+from . import newton
+
+def get_farfield_op(cfg):
+    if cfg['use_fmm']:
+        return tct.FMMFarfieldOp(cfg['fmm_mac'], cfg['pts_per_cell'], alpha = cfg['fmm_alpha'])
+    else:
+        return tct.TriToTriDirectFarfieldOp
+
+def build_elastic_op(m, cfg, K, obs_subset = None, src_subset = None):
+    op_cfg = cfg['tectosaur_cfg']
+    fullKname = 'elasticR' + K + '3'
+    return tct.RegularizedSparseIntegralOp(
+        op_cfg['quad_coincident_order'],
+        op_cfg['quad_edgeadj_order'],
+        op_cfg['quad_vertadj_order'],
+        op_cfg['quad_far_order'],
+        op_cfg['quad_near_order'],
+        op_cfg['quad_near_threshold'],
+        fullKname, fullKname, [1.0, cfg['pr']], m.pts, m.tris, op_cfg['float_type'],
+        farfield_op_type = get_farfield_op(op_cfg),
+        obs_subset = obs_subset,
+        src_subset = src_subset,
+    )
+
 def print_length_scales(model):
     sigma_n = model.cfg['additional_normal_stress']
 
@@ -47,3 +74,54 @@ def remember(f):
         return g.val
     g.val = None
     return g
+
+def rate_state_solve(model, traction, state):
+    timer = model.cfg['Timer']()
+    V = np.empty_like(model.field_inslipdir)
+    newton.rate_state_solver(
+        model.tri_normals, traction, state, V,
+        model.cfg['a'], model.cfg['eta'], model.cfg['V0'],
+        model.cfg['additional_normal_stress'],
+        1e-12, 50, int(model.n_dofs / model.n_tris),
+        model.cfg.get('rs_separate_dims', False)
+    )
+    timer.report('newton')
+
+    if model.basis_dim == 1:
+        ptavg_V = V
+    else:
+        ptavg_V = np.empty_like(V)
+        for d in range(3):
+            ptavg_V.reshape((-1,3))[:,d] = pt_averageD(
+                model.m.pts, model.m.get_tris('fault'), V.reshape((-1,3))[:,d].copy()
+            )
+    timer.report('pt avg')
+
+    out = (
+        model.field_inslipdir_edges * model.cfg['plate_rate']
+        + model.ones_interior * ptavg_V
+    )
+    timer.report('rate_state_solve --> out')
+    return out
+
+# State evolution law -- aging law.
+def aging_law(cfg, V, state):
+    return (cfg['b'] * cfg['V0'] / cfg['Dc']) * (
+        np.exp((cfg['f0'] - state) / cfg['b']) - (V / cfg['V0'])
+    )
+
+def state_evolution(cfg, V, state):
+    V_mag = np.linalg.norm(V.reshape(-1,3), axis = 1)
+    return aging_law(cfg, V_mag, state)
+
+def init_creep(model):
+    V_i = model.cfg['plate_rate']
+    def f(state):
+        return aging_law(model.cfg, V_i, state)
+    state_i = fsolve(f, 0.7)[0]
+    sigma_n = model.cfg['additional_normal_stress']
+    tau_i = newton.F(V_i, sigma_n, state_i, model.cfg['a'][0], model.cfg['V0'])
+    init_traction = tau_i * model.field_inslipdir_interior
+    init_slip_deficit = model.traction_to_slip(init_traction)
+    init_state =  state_i * np.ones((model.m.n_tris('fault') * 3))
+    return 0, -init_slip_deficit, init_state

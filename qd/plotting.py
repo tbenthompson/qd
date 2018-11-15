@@ -7,7 +7,6 @@ from IPython.display import clear_output
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from . import siay
-from .derivs import separate_slip_state, solve_for_full_state
 from .data import skip_existing_prefixed_folders
 from .basis_convert import dofs_to_pts
 
@@ -52,28 +51,6 @@ def get_levels(f, symmetric_scale):
     if symmetric_scale:
         min_f = -max_f
     return np.linspace(min_f, max_f, 21)
-
-def plot_setting(t, y, model, plotter = plot_fields):
-    slip, slip_deficit, state, traction, V, dstatedt = solve_for_full_state(
-        model, t, y
-    )
-    print('slip')
-    plotter(model, slip)
-    print('V')
-    plotter(model, np.log10(np.abs(V) + 1e-40))
-    print('traction')
-    plotter(model, traction)
-    print('state')
-    plotter(model, state)
-
-def display_model_time(integrator):
-    clear_output(wait = True)
-    t = integrator.h_t[-1]
-    print(integrator.step_idx(), t / siay)
-
-def display_full_model_state(integrator, plotter = plot_fields):
-    display_model_time(integrator)
-    plot_setting(integrator.h_t[-1], integrator.h_y[-1], integrator.model, plotter)
 
 class QDPlotData:
     def __init__(self, data, model_type):

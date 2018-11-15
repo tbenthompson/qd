@@ -4,7 +4,6 @@ from scipy.integrate import RK45
 
 from . import siay
 from .data import ChunkedDataSaver
-from .plotting import display_model_time
 
 class Integrator:
     def __init__(
@@ -26,11 +25,11 @@ class Integrator:
         self.setup_rk45(init_step_size)
 
     def setup_rk45(self, init_step_size):
-        init_t, init_slip, init_state = self.init_conditions
+        init_t, init_y = self.init_conditions
         self.rk45 = RK45(
             self.derivs,
             init_t,
-            np.concatenate((init_slip, init_state)),
+            init_y,
             1e50,
             atol = self.model.cfg['timestep_tol'],
             rtol = self.model.cfg['timestep_tol']
@@ -42,14 +41,17 @@ class Integrator:
 
     def integrate(self, n_steps, until = None, display_fnc = None, display_interval = 1):
         if display_fnc is None:
-            display_fnc = display_model_time
+            display_fnc = lambda: print(self.h_t[-1])
 
         for i in range(n_steps):
             if until is not None and integrator.t > until:
                 return
             assert(self.rk45.step() == None)
-            self.h_t.append(self.rk45.t)
-            self.h_y.append(self.rk45.y.copy())
+            new_t = self.rk45.t
+            new_y = self.rk45.y.copy()
+            self.h_t.append(new_t)
+            self.h_y.append(new_y)
+            self.model.post_step(self.h_t, self.h_y)
 
             if i % display_interval == 0:
                 display_fnc(self)

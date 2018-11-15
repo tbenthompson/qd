@@ -11,7 +11,8 @@ from tectosaur.constraint_builders import free_edge_constraints
 from tectosaur.constraints import build_constraint_matrix
 from tectosaur.util.timer import Timer
 
-from .model_helpers import calc_derived_constants, remember
+from .model_helpers import calc_derived_constants, remember, build_elastic_op
+from .plotting import plot_fields
 
 class FullspaceModel:
     def __init__(self, m, cfg):
@@ -26,11 +27,48 @@ class FullspaceModel:
 
     def make_derivs(self):
         def derivs(t, y):
-            slip, slip_deficit, state, traction, V, dstatedt = solve_for_full_state(
-                self, t, y
-            )
+            data = self.solve_for_full_state(t, y)
+            slip, slip_deficit, state, traction, V, dstatedt = data
             return np.concatenate((V, dstatedt))
         return derivs
+
+    def solve_for_full_state(self, t, y):
+        out = dict()
+        timer = self.cfg['Timer']()
+
+        n_total_dofs = y.shape[0]
+        n_slip_dofs = n_total_dofs // 4 * 3
+        slip, state = y[:n_slip_dofs], y[n_slip_dofs:]
+        timer.report('separate_slip_state')
+
+        plate_motion = (t * self.cfg['plate_rate']) * self.field_inslipdir
+        slip_deficit = self.ones_interior * (plate_motion.reshape(-1) - slip)
+        timer.report('get_slip_deficit')
+
+        traction = self.slip_to_traction(slip_deficit)
+        timer.report('slip_to_traction')
+
+        V = rate_state_solve(self, traction, state)
+        timer.report('rate_state_solve')
+
+        dstatedt = state_evolution(self.cfg, V, state)
+        timer.report('state_evolution')
+
+        return slip, slip_deficit, state, traction, V, dstatedt
+
+    def display_model(self, plotter = plot_fields):
+        clear_output(wait = True)
+        print(integrator.step_idx(), integrator.h_t[-1] / siay)
+        data = self.solve_for_full_state(t, y)
+        slip, slip_deficit, state, traction, V, dstatedt = data
+        print('slip')
+        plotter(model, slip)
+        print('V')
+        plotter(model, np.log10(np.abs(V) + 1e-40))
+        print('traction')
+        plotter(model, traction)
+        print('state')
+        plotter(model, state)
 
     @property
     @remember
@@ -74,10 +112,11 @@ class FullspaceModel:
             self.field_inslipdir - self.field_inslipdir_interior
         )
 
+
 def setup_slip_traction(m, cfg):
     setup_logging(cfg)
     cm = build_continuity(m, cfg)
-    H = build_hypersingular(m, cfg)
+    H = build_elastic_op(m, cfg, 'H')
     traction_mass_op = tct.MassOp(cfg['tectosaur_cfg']['quad_mass_order'], m.pts, m.tris)
     return H, traction_mass_op, cm
 
@@ -90,25 +129,6 @@ def build_continuity(m, cfg):
     cs.extend(free_edge_constraints(m.get_tris('fault')))
     cm, c_rhs = build_constraint_matrix(cs, m.n_dofs('fault'))
     return cm
-
-def build_hypersingular(m, cfg):
-    op_cfg = cfg['tectosaur_cfg']
-    return tct.RegularizedSparseIntegralOp(
-        op_cfg['quad_coincident_order'],
-        op_cfg['quad_edgeadj_order'],
-        op_cfg['quad_vertadj_order'],
-        op_cfg['quad_far_order'],
-        op_cfg['quad_near_order'],
-        op_cfg['quad_near_threshold'],
-        'elasticRH3', 'elasticRH3', [1.0, cfg['pr']], m.pts, m.tris, op_cfg['float_type'],
-        farfield_op_type = get_farfield_op(op_cfg)
-    )
-
-def get_farfield_op(cfg):
-    if cfg['use_fmm']:
-        return tct.FMMFarfieldOp(cfg['fmm_mac'], cfg['pts_per_cell'], alpha = cfg['fmm_alpha'])
-    else:
-        return tct.TriToTriDirectFarfieldOp
 
 def get_slip_to_traction(m, cfg):
     def f(slip):
