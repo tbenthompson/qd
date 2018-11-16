@@ -53,12 +53,12 @@ def get_levels(f, symmetric_scale):
     return np.linspace(min_f, max_f, 21)
 
 class QDPlotData:
-    def __init__(self, data, model_type):
+    def __init__(self, data):
         self.data = data
+        self.model = self.data.model
         self.cfg = self.data.cfg
         self.t = self.data.ts
         self.y = self.data.ys
-        self.model = model_type(self.data.m, self.cfg)
         self.t_years = self.t / siay
 
         self.n_steps = self.y.shape[0]
@@ -69,7 +69,9 @@ class QDPlotData:
         self.V = [0] * self.n_steps
         self.dt = [0] * self.n_steps
         for i in range(0, self.n_steps):
-            self.slip[i], self.state[i] = separate_slip_state(self.y[i])
+            components = self.model.get_components(self.y[i])
+            self.slip[i] = components[0]
+            self.state[i] = components[1]
             self.min_state[i] = np.min(self.state[i])
             if i > 0:
                 self.dt[i] = self.t[i] - self.t[i - 1]
@@ -81,20 +83,20 @@ class QDPlotData:
         state_at_pts = []
         for i in range(len(qdp.slip)):
             slip_at_pts.append(qd.dofs_to_pts(
-                qdp.model.m.pts, qdp.model.m.tris, qdp.model.basis_dim,
-                qdp.slip[i].reshape((-1,3))
+                self.model.m.pts, self.model.m.tris, self.model.basis_dim,
+                self.slip[i].reshape((-1,3))
             ))
             state_at_pts.append(qd.dofs_to_pts(
-                qdp.model.m.pts, qdp.model.m.tris, qdp.model.basis_dim,
-                qdp.state[i].reshape((-1,1))
+                self.model.m.pts, self.model.m.tris, self.model.basis_dim,
+                self.state[i].reshape((-1,1))
             ))
         slip_at_pts = np.array(slip_at_pts)
         state_at_pts = np.array(state_at_pts)[:,:,0]
         np.save(
             filename,
             (
-                qdp.model.m.pts, qdp.model.m.tris,
-                qdp.t, slip_at_pts, state_at_pts
+                self.model.m.pts, self.model.m.tris,
+                self.t, slip_at_pts, state_at_pts
             )
         )
 
@@ -121,34 +123,37 @@ class QDPlotData:
 
     def nicefig(self, field, levels, contour_levels, cmap,
             t_years = None, filepath = None, figsize = (10,8),
-            dim = [0,2]):
+            which = 'fault', dim = [0,2]):
         contour_levels = levels[::3]
 
-        is_tde = field.size == self.model.m.tris.shape[0]
+        is_tde = field.size == self.model.m.n_tris(which)
 
         fig = plt.figure(figsize = figsize)
         ax = plt.gca()
         div = make_axes_locatable(ax)
         cax = div.append_axes('right', '5%', '5%')
 
+        which_tris = self.model.m.get_tris(which).copy()
         pt_field = dofs_to_pts(
-            self.model.m.pts, self.model.m.tris, self.model.basis_dim,
-            field.reshape(-1, 1)
+            self.model.m.pts, which_tris,
+            self.model.basis_dim, field.reshape(-1, 1)
         )[:,0]
+        which_pts_idxs = np.unique(which_tris)
+        which_pts = self.model.m.pts[which_pts_idxs]
 
         color_plot = ax.tricontourf(
-            self.model.m.pts[:,dim[0]], self.model.m.pts[:,dim[1]], self.model.m.tris,
+            self.model.m.pts[:,dim[0]], self.model.m.pts[:,dim[1]], which_tris,
             pt_field, cmap = cmap, levels = levels, extend = 'both'
         )
         ax.tricontour(
-            self.model.m.pts[:,dim[0]], self.model.m.pts[:,dim[1]], self.model.m.tris,
+            self.model.m.pts[:,dim[0]], self.model.m.pts[:,dim[1]], which_tris,
             pt_field, levels = contour_levels, extend = 'both',
             linestyles = 'solid', linewidths = 0.75,
             colors = ['#FFFFFF'] * contour_levels.shape[0]
         )
 
-        minpt = np.min(self.model.m.pts, axis = 0)
-        maxpt = np.max(self.model.m.pts, axis = 0)
+        minpt = np.min(which_pts, axis = 0)
+        maxpt = np.max(which_pts, axis = 0)
         width = maxpt - minpt
 
         F = 0.03

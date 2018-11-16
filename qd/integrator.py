@@ -51,7 +51,6 @@ class Integrator:
             new_y = self.rk45.y.copy()
             self.h_t.append(new_t)
             self.h_y.append(new_y)
-            self.model.post_step(self.h_t, self.h_y)
 
             if i % display_interval == 0:
                 display_fnc(self)

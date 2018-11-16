@@ -76,7 +76,8 @@ class ChunkedDataSaver:
 
 
 class ChunkedDataLoader:
-    def __init__(self, folder_name):
+    def __init__(self, folder_name, model_type):
+        self.model_type = model_type
         self.folder_name = folder_name
         self.idxs = []
         self.ts = None
@@ -88,9 +89,9 @@ class ChunkedDataLoader:
     def load_initial_data(self):
         with open(initial_data_path(self.folder_name), 'rb') as f:
             self.m, self.cfg, self.init_conditions = cloudpickle.load(f)
-        n_dofs = self.init_conditions[1].shape[0]
-        n_tris = self.m.tris.shape[0]
-        self.basis_dim = n_dofs // n_tris // 3
+        self.n_dofs = self.init_conditions[1].shape[0]
+        self.n_tris = self.m.tris.shape[0]
+        self.model = self.model_type(self.m, self.cfg)
 
     def load_new_files(self):
         new_idxs = []
@@ -105,7 +106,7 @@ class ChunkedDataLoader:
         new_idxs.sort()
 
         new_ts = np.empty(new_idxs[-1])
-        new_ys = np.empty((new_idxs[-1], self.m.tris.shape[0] * 4 * (self.basis_dim)))
+        new_ys = np.empty((new_idxs[-1], self.n_dofs))
 
         if self.ts is not None:
             new_ts[:self.idxs[-1]] = self.ts
@@ -123,5 +124,5 @@ class ChunkedDataLoader:
 
         self.idxs += new_idxs
 
-def load(folder_name):
-    return ChunkedDataLoader(folder_name)
+def load(folder_name, model_type):
+    return ChunkedDataLoader(folder_name, model_type)
