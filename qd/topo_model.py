@@ -1,7 +1,6 @@
 import numpy as np
 from scipy.sparse.linalg import cg
 import scipy.sparse
-from IPython.display import clear_output
 
 import tectosaur as tct
 import tectosaur_topo
@@ -52,6 +51,7 @@ class TopoModel:
         return slip, state, disp
 
     def solve_for_full_state(self, t, y):
+        timer = self.cfg['Timer']()
         do_fast_step = self.last_vel is not None and self.cfg['fast_surf_disp']
 
         slip, state, surf_disp = self.get_components(y)
@@ -62,34 +62,37 @@ class TopoModel:
         plate_dist = t * self.cfg['plate_rate']
         plate_motion = (plate_dist * self.field_inslipdir).reshape(-1)
         slip_deficit = self.ones_interior * (plate_motion - slip)
+        timer.report('slip deficit')
 
-        print('solve for disp')
         if do_fast_step:
-            print('FASTSTEP')
             disp_slip = np.concatenate((surf_disp, slip))
         else:
             disp_slip = self.slip_to_disp(slip_deficit)
+        timer.report(f'disp_slip(fast={do_fast_step})')
 
             # V = (disp - old_disp) /
         # disp_slip = np.concatenate(disp, slip_deficit)
-        print('solve for traction')
         traction = self.disp_slip_to_traction(disp_slip)
         fault_traction = traction[self.m.n_dofs('surf'):].copy()
-        print('solve for V')
+        timer.report('traction')
+
         fault_V = rate_state_solve(self, fault_traction, state)
-        print('solve for dstatedt')
+        timer.report('fault_V')
+
         dstatedt = state_evolution(self.cfg, fault_V, state)
+        timer.report('dstatedt')
 
         if check_naninf(fault_V):
             return False
 
         if do_fast_step:
             surf_vel = self.m.get_dofs(
-                self.slip_rate_to_surf_velocity(fault_V, self.last_vel),
+                self.slip_rate_to_surf_velocity(self.last_vel, fault_V),
                 'surf'
             )
         else:
             surf_vel = np.zeros(self.m.n_dofs('surf'))
+        timer.report('surf_vel')
 
         out = disp_slip, state, traction, fault_V, dstatedt, surf_vel
         return out
@@ -102,7 +105,6 @@ class TopoModel:
             self.last_vel = dydt[self.m.n_tris('fault') * 12:]
 
     def display_model(self, t, y, plotter = plot_fields):
-        clear_output(wait = True)
         print(t / siay)
         data = self.solve_for_full_state(t, y)
         disp_slip, state, traction, fault_V, dstatedt, surf_vel = data
@@ -113,7 +115,7 @@ class TopoModel:
         print('fault V')
         plotter(self, np.log10(np.abs(fault_V) + 1e-40))
         print('surf V')
-        plotter(self, np.log10(np.abs(surf_vel) + 1e-40), which = 'surf', dims = [0,1])
+        plotter(self, surf_vel, which = 'surf', dims = [0,1])
         print('traction on fault')
         plotter(self, self.m.get_dofs(traction, 'fault'))
         print('traction on surface')
@@ -129,7 +131,7 @@ class TopoModel:
     @property
     @remember
     def slip_rate_to_surf_velocity(self):
-        return get_slip_rate_to_surf_velocity(self.m, self.cfg, self.T())
+        return get_slip_rate_to_surf_velocity(self.m, self.cfg)
 
     @property
     @remember
@@ -187,7 +189,7 @@ class TopoModel:
 
         self.field_inslipdir_edges = self.field_inslipdir - self.field_inslipdir_interior
 
-def get_slip_rate_to_surf_velocity(m, cfg, T):
+def get_slip_rate_to_surf_velocity(m, cfg):
     n_surf = m.n_dofs('surf')
     n_fault = m.n_dofs('fault')
     n_total = m.n_dofs()
@@ -195,6 +197,12 @@ def get_slip_rate_to_surf_velocity(m, cfg, T):
     cs = tct.continuity_constraints(m.pts, m.tris, m.get_start('fault'))
     cs.extend(tct.free_edge_constraints(m.get_tris('surf')))
     cm, c_rhs = tct.build_constraint_matrix(cs, m.n_dofs())
+
+    T = build_elastic_op(
+        m, cfg, 'T',
+        obs_subset = m.get_tri_idxs('surf'),
+        src_subset = np.arange(m.tris.shape[0])
+    )
 
     disp_mass_op = tct.MassOp(
         cfg['tectosaur_cfg']['quad_mass_order'], m.pts, m.tris
@@ -208,7 +216,8 @@ def get_slip_rate_to_surf_velocity(m, cfg, T):
         t = cfg['Timer']()
         full_vel = np.concatenate((in_surf_vel, in_fault_vel))
         t.report('concat')
-        rhs = -T.dot(full_vel)
+        rhs = np.empty(full_vel.shape[0])
+        rhs[:m.n_dofs('surf')] = -T.dot(full_vel)
         t.report('Tdot')
         rhs[m.n_dofs('surf'):] = in_fault_vel
         t.report('set rhs fault')
@@ -283,4 +292,7 @@ def get_traction_to_slip(m, cfg, H):
             H, cm, rhs, lambda x: x, dict(solver_tol = 1e-6)
         )
         return out
+    f.H = H
+    f.cm = cm
+    f.traction_mass_op = traction_mass_op
     return f

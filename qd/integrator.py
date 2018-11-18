@@ -1,6 +1,7 @@
 import numpy as np
 
-from scipy.integrate import RK45
+from scipy.integrate import RK23
+from IPython.display import clear_output
 
 from . import siay
 from .data import ChunkedDataSaver
@@ -22,11 +23,11 @@ class Integrator:
         self.data_handler = data_handler
         self.data_handler.initialized(self)
 
-        self.setup_rk45(init_step_size)
+        self.setup_rk23(init_step_size)
 
-    def setup_rk45(self, init_step_size):
+    def setup_rk23(self, init_step_size):
         init_t, init_y = self.init_conditions
-        self.rk45 = RK45(
+        self.rk23 = RK23(
             self.derivs,
             init_t,
             init_y,
@@ -34,7 +35,7 @@ class Integrator:
             atol = self.model.cfg['timestep_tol'],
             rtol = self.model.cfg['timestep_tol']
         )
-        self.rk45.h_abs = init_step_size
+        self.rk23.h_abs = init_step_size
 
     def step_idx(self):
         return len(self.h_t)
@@ -46,14 +47,13 @@ class Integrator:
         for i in range(n_steps):
             if until is not None and integrator.t > until:
                 return
-            assert(self.rk45.step() == None)
-            new_t = self.rk45.t
-            new_y = self.rk45.y.copy()
+            assert(self.rk23.step() == None)
+            new_t = self.rk23.t
+            new_y = self.rk23.y.copy()
             self.h_t.append(new_t)
             self.h_y.append(new_y)
+            self.model.post_step(self.h_t, self.h_y)
 
             if i % display_interval == 0:
                 display_fnc(self)
             self.data_handler.stepped(self)
-
-

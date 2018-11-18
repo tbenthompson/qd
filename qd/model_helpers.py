@@ -1,5 +1,6 @@
 import logging
 import numpy as np
+import uuid
 
 import tectosaur as tct
 import cppimport.import_hook
@@ -68,11 +69,11 @@ def calc_derived_constants(cfg):
     return out_cfg
 
 def remember(f):
-    def g(*args, **kwargs):
-        if g.val is None:
-            g.val = f(*args, **kwargs)
-        return g.val
-    g.val = None
+    unique_id = uuid.uuid4().hex[:6].upper()
+    def g(self, *args, **kwargs):
+        if not hasattr(self, unique_id):
+            setattr(self, unique_id, f(self, *args, **kwargs))
+        return getattr(self, unique_id)
     return g
 
 def rate_state_solve(model, traction, state):
