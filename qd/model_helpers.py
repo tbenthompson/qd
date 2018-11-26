@@ -15,7 +15,10 @@ def get_farfield_op(cfg):
 
 def build_elastic_op(m, cfg, K, obs_subset = None, src_subset = None):
     op_cfg = cfg['tectosaur_cfg']
-    fullKname = 'elasticR' + K + '3'
+    if K == 'U':
+        fullKname = 'elastic' + K + '3'
+    else:
+        fullKname = 'elasticR' + K + '3'
     return tct.RegularizedSparseIntegralOp(
         op_cfg['quad_coincident_order'],
         op_cfg['quad_edgeadj_order'],
@@ -81,7 +84,8 @@ def rate_state_solve(model, traction, state):
     V = np.empty_like(model.field_inslipdir)
     newton.rate_state_solver(
         model.tri_normals, traction, state, V,
-        model.cfg['a'], model.cfg['eta'], model.cfg['V0'],
+        model.cfg['a'], model.cfg['eta'],
+        model.cfg['V0'], model.cfg.get('C', 0.0),
         model.cfg['additional_normal_stress'],
         1e-12, 50, int(model.n_dofs / model.n_tris),
         model.cfg.get('rs_separate_dims', False)

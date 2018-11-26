@@ -30,8 +30,8 @@ std::pair<double,bool> newton(const F& f, const Fp& fp, double x0, double tol, i
     return {x0, false}; 
 }
 
-double F(double V, double sigma_n, double state, double a, double V0) {
-    return a * sigma_n * std::asinh(V / (2 * V0) * std::exp(state / a));
+double F(double V, double sigma_n, double state, double a, double V0, double C) {
+    return a * sigma_n * std::asinh(V / (2 * V0) * std::exp(state / a)) - C;
 }
 
 //https://www.wolframalpha.com/input/?i=d%5Ba*S*arcsinh(x+%2F+(2*y)+*+exp(s%2Fa))%5D%2Fdx
@@ -56,11 +56,11 @@ auto newton_py(std::function<double(double)> f,
 }
 
 auto newton_rs(double tau_qs, double eta, double sigma_n,
-        double state, double a, double V0, 
+        double state, double a, double V0, double C,
         double V_guess, double tol, int maxiter) 
 {
     auto rsf = [&] (double V) { 
-        return tau_qs - eta * V - F(V, sigma_n, state, a, V0); 
+        return tau_qs - eta * V - F(V, sigma_n, state, a, V0, C); 
     };
     auto rsf_deriv = [&] (double V) { 
         return -eta - dFdV(V, sigma_n, state, a, V0); 
@@ -112,7 +112,7 @@ Vec3 solve_for_dof_separate_dims(const Vec3& traction_vec,
 
 void rate_state_solver(NPArray<double> tri_normals, NPArray<double> traction,
         NPArray<double> state, NPArray<double> velocity, NPArray<double> a,
-        double eta, double V0,
+        double eta, double V0, double C,
         double additional_normal_stress,
         double tol, double maxiter, int basis_dim, bool separate_dims)
 {
@@ -136,7 +136,7 @@ void rate_state_solver(NPArray<double> tri_normals, NPArray<double> traction,
             auto rs_solver_fnc = [&] (double shear_mag, double normal_mag) {
                 auto solve_result = newton_rs(
                     shear_mag, eta, normal_mag + additional_normal_stress, 
-                    state, a_ptr[dof], V0, 0.0, tol, maxiter
+                    state, a_ptr[dof], V0, C, 0.0, tol, maxiter
                 );
                 assert(solve_result.second);
                 return solve_result.first;

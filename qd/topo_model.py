@@ -6,6 +6,7 @@ import tectosaur as tct
 import tectosaur_topo
 from tectosaur.util.geometry import unscaled_normals
 from tectosaur.util.timer import Timer
+from tectosaur.constraints import ConstraintEQ, Term
 
 from . import siay
 from .full_model import setup_logging
@@ -28,6 +29,7 @@ class TopoModel:
         self.setup_mesh(m)
         self.setup_edge_bcs()
         self.last_vel = None
+        self.first = True
 
     def make_derivs(self):
         def derivs(t, y):
@@ -37,6 +39,9 @@ class TopoModel:
             if not data:
                 return np.inf * y
             disp_slip, state, traction, fault_V, dstatedt, surf_vel = data
+            if self.first:
+                self.last_vel = surf_vel
+                self.first = False
             # return np.concatenate((np.zeros(self.m.n_dofs('surf')), fault_V, dstatedt))
             return np.concatenate((fault_V, dstatedt, surf_vel))
         return derivs
@@ -246,17 +251,17 @@ def get_slip_to_disp(m, cfg, T):
         iop = tct.SumOp([T, tct.MultOp(mass_op, 0.5)])
         rhs = -iop.dot(c_rhs)
         out = tectosaur_topo.solve.iterative_solve(
-            iop, cm, rhs, lambda x: x, dict(solver_tol = 1e-6)
+            iop, cm, rhs, lambda x: x, dict(solver_tol = 1e-4)
         )
         return out + c_rhs
     return f
 
 def get_disp_slip_to_traction(m, cfg, H):
     csS = tct.continuity_constraints(m.pts, m.get_tris('surf'), m.get_end('surf'))
-    csS.extend(tct.free_edge_constraints(m.get_tris('surf')))
     csF = tct.continuity_constraints(m.pts, m.get_tris('fault'), m.get_end('fault'))
-    csF.extend(tct.free_edge_constraints(m.get_tris('fault')))
     cs = tct.build_composite_constraints((csS, 0), (csF, m.n_dofs('surf')))
+    cs.extend(tct.free_edge_constraints(m.tris))
+    cs.extend(fault_surf_intersection_traction_constraints(m))
     cm, c_rhs = tct.build_constraint_matrix(cs, m.n_dofs())
 
     traction_mass_op = tct.MassOp(cfg['tectosaur_cfg']['quad_mass_order'], m.pts, m.tris)
@@ -275,24 +280,93 @@ def get_disp_slip_to_traction(m, cfg, H):
         return out
     return f
 
+def fault_surf_intersection_traction_constraints(m):
+    surf_tris = m.get_tris('surf')
+    unscaled_ns = tct.util.geometry.unscaled_normals(m.pts[surf_tris])
+    ns = tct.util.geometry.normalize(unscaled_ns)
+    pt_ns = np.zeros((m.pts.shape[0], 3))
+    for i in range(m.n_tris('surf')):
+        for d in range(3):
+            pt_ns[m.tris[i,d]] += ns[i]
+    n_ns = np.ones((m.pts.shape[0]))
+    unique, counts = np.unique(surf_tris, return_counts=True)
+    n_ns[unique] = counts
+    pt_ns /= n_ns[:,np.newaxis]
+    cs = []
+    for i in m.get_tri_idxs('fault'):
+        for d in range(3):
+            n = pt_ns[m.tris[i,d]]
+            if np.all(n == 0):
+                continue
+            ts = []
+            for d2 in range(3):
+                if n[d2] == 0.0:
+                    continue
+                fault_dof = i * 9 + d * 3 + d2
+                ts.append(Term(n[d2], fault_dof))
+            cs.append(ConstraintEQ(ts, 0))
+    return cs
+
+
 def get_traction_to_slip(m, cfg, H):
+    t = cfg['Timer']()
     csS = tct.continuity_constraints(m.pts, m.tris, m.get_start('fault'))
     csF = tct.continuity_constraints(m.pts, m.get_tris('fault'), m.get_end('fault'))
     cs = tct.build_composite_constraints((csS, 0), (csF, m.n_dofs('surf')))
     cs.extend(tct.free_edge_constraints(m.tris))
 
     cm, c_rhs = tct.build_constraint_matrix(cs, m.n_dofs())
+    cm = cm.tocsr()
+    cmT = cm.T.tocsr()
+    t.report('t2s -- build constraints')
 
     traction_mass_op = tct.MassOp(cfg['tectosaur_cfg']['quad_mass_order'], m.pts, m.tris)
     np.testing.assert_almost_equal(c_rhs, 0.0)
+    t.report('t2s -- build massop')
+
+    # nearfield_H = H.nearfield.full_scipy_mat_no_correction()
+    # diag_H = nearfield_H.diagonal()
+    # def prec(x):
+    #     return cm.T.dot(cm.dot(x) / diag_H)
+
+    # nearfield_H = H.nearfield.full_scipy_mat_no_correction()
+    # constrained_nearfield_H = cmT.dot(nearfield_H.dot(cm))
+    # t.report('t2s -- constrained nearfield')
+    # spilu = scipy.sparse.linalg.spilu(constrained_nearfield_H)
+    # t.report('t2s -- spilu')
+    # def prec(x):
+    #     return spilu.solve(x)
+
+    # U = build_elastic_op(m, cfg, 'U')
+    # nearfield_U = U.nearfield.full_scipy_mat_no_correction()
+    # diag_U = nearfield_U.diagonal()
+    # def prec(x):
+    #     return cmT.dot(U.dot(cm.dot(x)))
+
+    def prec(x):
+        return x
 
     def f(traction):
         rhs = -traction_mass_op.dot(traction / cfg['sm'])
         out = tectosaur_topo.solve.iterative_solve(
-            H, cm, rhs, lambda x: x, dict(solver_tol = 1e-6)
+            H, cm, rhs, prec, dict(solver_tol = 1e-4)
         )
         return out
     f.H = H
     f.cm = cm
     f.traction_mass_op = traction_mass_op
     return f
+
+def refine_mesh_and_initial_conditions(m, slip_deficit):
+    fields = [slip_deficit.reshape((-1,3,3))[:,:,d] for d in range(3)]
+    m_refined, new_fields = tct.mesh.refine.refine_to_size(
+        (m.pts, m.tris), 0.000000001, recurse = False, fields = fields
+    )
+    slip_deficit2 = np.swapaxes(np.swapaxes(np.array(new_fields), 0, 2), 0, 1)
+    surf_tris = m_refined[1][:m.n_tris('surf') * 4].copy()
+    fault_tris = m_refined[1][m.n_tris('surf') * 4:].copy()
+    m2 = tct.CombinedMesh.from_named_pieces([
+        ('surf', (m_refined[0], surf_tris)),
+        ('fault', (m_refined[0], fault_tris))
+    ])
+    return m2, slip_deficit2
