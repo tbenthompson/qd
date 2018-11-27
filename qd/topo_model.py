@@ -19,8 +19,9 @@ def check_naninf(x):
     return np.any(np.isnan(x)) or np.any(np.isinf(x))
 
 class TopoModel:
-    def __init__(self, m, cfg):
+    def __init__(self, m, cfg, which_side):
         cfg = calc_derived_constants(cfg)
+        self.which_side = which_side
         self.cfg = cfg
         self.cfg['Timer'] = self.cfg.get(
             'Timer',
@@ -67,17 +68,18 @@ class TopoModel:
         plate_dist = t * self.cfg['plate_rate']
         plate_motion = (plate_dist * self.field_inslipdir).reshape(-1)
         slip_deficit = self.ones_interior * (plate_motion - slip)
+        surf_disp_deficit = (self.surface_dispdirs * platedist) - surf_disp
         timer.report('slip deficit')
 
         if do_fast_step:
-            disp_slip = np.concatenate((surf_disp, slip))
+            disp_slip_deficit = np.concatenate((surf_disp_deficit, slip_deficit))
         else:
-            disp_slip = self.slip_to_disp(slip_deficit)
+            disp_slip_deficit = self.slip_to_disp(slip_deficit)
         timer.report(f'disp_slip(fast={do_fast_step})')
 
             # V = (disp - old_disp) /
         # disp_slip = np.concatenate(disp, slip_deficit)
-        traction = self.disp_slip_to_traction(disp_slip)
+        traction = self.disp_slip_to_traction(disp_slip_deficit)
         fault_traction = traction[self.m.n_dofs('surf'):].copy()
         timer.report('traction')
 
@@ -99,7 +101,7 @@ class TopoModel:
             surf_vel = np.zeros(self.m.n_dofs('surf'))
         timer.report('surf_vel')
 
-        out = disp_slip, state, traction, fault_V, dstatedt, surf_vel
+        out = disp_slip_deficit, state, traction, fault_V, dstatedt, surf_vel
         return out
 
     def post_step(self, ts, ys):
@@ -113,9 +115,9 @@ class TopoModel:
         print(t / siay)
         data = self.solve_for_full_state(t, y)
         disp_slip, state, traction, fault_V, dstatedt, surf_vel = data
-        print('slip')
+        print('slip deficit')
         plotter(self, self.m.get_dofs(disp_slip, 'fault'))
-        print('surface displacement')
+        print('surface displacement deficit')
         plotter(self, self.m.get_dofs(disp_slip, 'surf'), which = 'surf', dims = [0,1])
         print('fault V')
         plotter(self, np.log10(np.abs(fault_V) + 1e-40))
@@ -194,6 +196,15 @@ class TopoModel:
 
         self.field_inslipdir_edges = self.field_inslipdir - self.field_inslipdir_interior
 
+        self.surf_tri_centers = np.mean(self.m.pts[self.m.get_tris('surf')], axis = 1)
+        self.sides = self.which_side(self.surf_tri_centers).astype(np.float)
+        half_slipdir = np.array(self.cfg['slipdir']) / 2.0
+        tri_dispdirs = (
+            (self.sides[:,np.newaxis] * 2 - 1.0) *
+            np.tile(half_slipdir[np.newaxis, :], (self.m.n_tris('surf'), 1))
+        )
+        self.surface_dispdirs = np.tile(tri_dispdirs[:,np.newaxis,:], (1,3,1)).flatten()
+
 def get_slip_rate_to_surf_velocity(m, cfg):
     n_surf = m.n_dofs('surf')
     n_fault = m.n_dofs('fault')
@@ -236,7 +247,7 @@ def get_slip_rate_to_surf_velocity(m, cfg):
 
 def get_slip_to_disp(m, cfg, T):
     base_cs = tct.continuity_constraints(m.pts, m.tris, m.get_start('fault'))
-    base_cs.extend(tct.free_edge_constraints(m.get_tris('surf')))
+    # base_cs.extend(tct.free_edge_constraints(m.tris))
 
     mass_op = tct.MassOp(
         cfg['tectosaur_cfg']['quad_mass_order'], m.pts, m.tris
@@ -246,34 +257,46 @@ def get_slip_to_disp(m, cfg, T):
         cs = base_cs + tct.all_bc_constraints(
             m.n_tris('surf'), m.n_tris(), slip
         )
-        cm, c_rhs = tct.build_constraint_matrix(cs, m.n_dofs())
+        newcs = []
+        for c in cs:
+            if len(c.terms) < 3:
+                newcs.append(c)
+                continue
+            fault_dof = c.terms[2].dof - m.n_dofs('surf')
+            if fault_dof % 3 != 0:
+                newcs.append(c)
+                continue
+
+            for t in c.terms[:2]:
+                newcs.append(ConstraintEQ([Term(t.val, t.dof)], slip[fault_dof] / 2.0))
+        cm, c_rhs = tct.build_constraint_matrix(newcs, m.n_dofs())
 
         iop = tct.SumOp([T, tct.MultOp(mass_op, 0.5)])
         rhs = -iop.dot(c_rhs)
         out = tectosaur_topo.solve.iterative_solve(
-            iop, cm, rhs, lambda x: x, dict(solver_tol = 1e-4)
+            iop, cm, rhs, lambda x: x, dict(solver_tol = 1e-5)
         )
         return out + c_rhs
     return f
 
 def get_disp_slip_to_traction(m, cfg, H):
-    csS = tct.continuity_constraints(m.pts, m.get_tris('surf'), m.get_end('surf'))
+    csS = tct.continuity_constraints(m.pts, m.tris, m.get_start('fault'))
     csF = tct.continuity_constraints(m.pts, m.get_tris('fault'), m.get_end('fault'))
     cs = tct.build_composite_constraints((csS, 0), (csF, m.n_dofs('surf')))
     cs.extend(tct.free_edge_constraints(m.tris))
-    cs.extend(fault_surf_intersection_traction_constraints(m))
     cm, c_rhs = tct.build_constraint_matrix(cs, m.n_dofs())
 
     traction_mass_op = tct.MassOp(cfg['tectosaur_cfg']['quad_mass_order'], m.pts, m.tris)
     constrained_traction_mass_op = cm.T.dot(traction_mass_op.mat.dot(cm))
 
     def f(disp_slip):
+        np.testing.assert_almost_equal(c_rhs, 0.0)
         def callback(x):
             callback.iter += 1
             print(callback.iter)
         callback.iter = 0
 
-        rhs = H.dot(disp_slip)
+        rhs = -H.dot(disp_slip)
         constrained_rhs = cm.T.dot(rhs)
         soln = cg(constrained_traction_mass_op, constrained_rhs)#, callback = callback)
         out = cfg['sm'] * cm.dot(soln[0])
@@ -298,6 +321,7 @@ def fault_surf_intersection_traction_constraints(m):
             n = pt_ns[m.tris[i,d]]
             if np.all(n == 0):
                 continue
+            assert(np.where(surf_tris == m.tris[i,d])[0].shape[0] > 0)
             ts = []
             for d2 in range(3):
                 if n[d2] == 0.0:
