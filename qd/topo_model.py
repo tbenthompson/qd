@@ -19,9 +19,9 @@ def check_naninf(x):
     return np.any(np.isnan(x)) or np.any(np.isinf(x))
 
 class TopoModel:
-    def __init__(self, m, cfg, which_side):
+    def __init__(self, m, cfg):#, which_side):
         cfg = calc_derived_constants(cfg)
-        self.which_side = which_side
+        # self.which_side = which_side
         self.cfg = cfg
         self.cfg['Timer'] = self.cfg.get(
             'Timer',
@@ -56,10 +56,10 @@ class TopoModel:
         disp = y[state_end:]
         return slip, state, disp
 
-    def solve_for_full_state(self, t, y):
-        timer = self.cfg['Timer']()
-        do_fast_step = self.last_vel is not None and self.cfg['fast_surf_disp']
+    def do_fast_step(self):
+        return self.last_vel is not None and self.cfg['fast_surf_disp']
 
+    def solve_for_disp_slip_deficit(self, t, y):
         slip, state, surf_disp = self.get_components(y)
 
         if np.any(state < 0) or np.any(state > 1.2):
@@ -68,17 +68,21 @@ class TopoModel:
         plate_dist = t * self.cfg['plate_rate']
         plate_motion = (plate_dist * self.field_inslipdir).reshape(-1)
         slip_deficit = self.ones_interior * (plate_motion - slip)
-        surf_disp_deficit = (self.surface_dispdirs * platedist) - surf_disp
-        timer.report('slip deficit')
+        surf_disp_deficit = -((self.locked_fault_surf_disp_deficit * plate_dist) + surf_disp)
 
-        if do_fast_step:
+        if self.do_fast_step():
             disp_slip_deficit = np.concatenate((surf_disp_deficit, slip_deficit))
         else:
             disp_slip_deficit = self.slip_to_disp(slip_deficit)
+        return disp_slip_deficit
+
+    def solve_for_full_state(self, t, y):
+        timer = self.cfg['Timer']()
+        _, state, _ = self.get_components(y)
+        disp_slip_deficit = self.solve_for_disp_slip_deficit(t, y)
+        do_fast_step = self.do_fast_step()
         timer.report(f'disp_slip(fast={do_fast_step})')
 
-            # V = (disp - old_disp) /
-        # disp_slip = np.concatenate(disp, slip_deficit)
         traction = self.disp_slip_to_traction(disp_slip_deficit)
         fault_traction = traction[self.m.n_dofs('surf'):].copy()
         timer.report('traction')
@@ -92,7 +96,7 @@ class TopoModel:
         if check_naninf(fault_V):
             return False
 
-        if do_fast_step:
+        if self.do_fast_step():
             surf_vel = self.m.get_dofs(
                 self.slip_rate_to_surf_velocity(self.last_vel, fault_V),
                 'surf'
@@ -104,12 +108,23 @@ class TopoModel:
         out = disp_slip_deficit, state, traction, fault_V, dstatedt, surf_vel
         return out
 
-    def post_step(self, ts, ys):
+    def post_step(self, ts, ys, rk):
         if len(ts) >= 2:
             dt = ts[-1] - ts[-2]
             dy = ys[-1] - ys[-2]
             dydt = dy / dt
             self.last_vel = dydt[self.m.n_tris('fault') * 12:]
+        if len(ts) % self.cfg.get('refresh_disp_freq', int(1e12)) == 0:
+            disp_slip_deficit = self.solve_for_disp_slip_deficit(rk.t, rk.y)
+            _, state, _ = self.get_components(rk.y)
+            slip_deficit = self.m.get_dofs(disp_slip_deficit, 'fault')
+            surf_disp_deficit = self.m.get_dofs(disp_slip_deficit, 'surf')
+
+            plate_dist = rk.t * self.cfg['plate_rate']
+            plate_motion = (plate_dist * self.field_inslipdir).reshape(-1)
+            slip = self.ones_interior * (plate_motion - slip_deficit)
+            surf_disp = -surf_disp_deficit - (self.locked_fault_surf_disp_deficit * plate_dist)
+            rk.y = np.concatenate((slip, state, surf_disp))
 
     def display_model(self, t, y, plotter = plot_fields):
         print(t / siay)
@@ -133,7 +148,7 @@ class TopoModel:
     @property
     @remember
     def slip_to_disp(self):
-        return get_slip_to_disp(self.m, self.cfg, self.T())
+        return get_slip_to_disp(self.m, self.cfg, self.H())
 
     @property
     @remember
@@ -162,11 +177,6 @@ class TopoModel:
     def H(self):
         setup_logging(self.cfg)
         return build_elastic_op(self.m, self.cfg, 'H')
-
-    @remember
-    def T(self):
-        setup_logging(self.cfg)
-        return build_elastic_op(self.m, self.cfg, 'T')
 
     def setup_mesh(self, m):
         self.m = m
@@ -197,13 +207,23 @@ class TopoModel:
         self.field_inslipdir_edges = self.field_inslipdir - self.field_inslipdir_interior
 
         self.surf_tri_centers = np.mean(self.m.pts[self.m.get_tris('surf')], axis = 1)
-        self.sides = self.which_side(self.surf_tri_centers).astype(np.float)
-        half_slipdir = np.array(self.cfg['slipdir']) / 2.0
-        tri_dispdirs = (
-            (self.sides[:,np.newaxis] * 2 - 1.0) *
-            np.tile(half_slipdir[np.newaxis, :], (self.m.n_tris('surf'), 1))
+
+        # self.sides = self.which_side(self.surf_tri_centers).astype(np.float)
+        # half_slipdir = np.array(self.cfg['slipdir']) / 2.0
+        # tri_dispdirs = (
+        #     (self.sides[:,np.newaxis] * 2 - 1.0) *
+        #     np.tile(half_slipdir[np.newaxis, :], (self.m.n_tris('surf'), 1))
+        # )
+        # self.surface_dispdirs = np.tile(tri_dispdirs[:,np.newaxis,:], (1,3,1)).flatten()
+
+    @property
+    @remember
+    def locked_fault_surf_disp_deficit(self):
+        return self.m.get_dofs(
+            self.slip_to_disp(self.field_inslipdir_interior),
+            'surf'
         )
-        self.surface_dispdirs = np.tile(tri_dispdirs[:,np.newaxis,:], (1,3,1)).flatten()
+
 
 def get_slip_rate_to_surf_velocity(m, cfg):
     n_surf = m.n_dofs('surf')
@@ -245,9 +265,9 @@ def get_slip_rate_to_surf_velocity(m, cfg):
     return f
 
 
-def get_slip_to_disp(m, cfg, T):
+def get_slip_to_disp(m, cfg, H):
     base_cs = tct.continuity_constraints(m.pts, m.tris, m.get_start('fault'))
-    # base_cs.extend(tct.free_edge_constraints(m.tris))
+    base_cs.extend(tct.free_edge_constraints(m.tris))
 
     mass_op = tct.MassOp(
         cfg['tectosaur_cfg']['quad_mass_order'], m.pts, m.tris
@@ -257,24 +277,11 @@ def get_slip_to_disp(m, cfg, T):
         cs = base_cs + tct.all_bc_constraints(
             m.n_tris('surf'), m.n_tris(), slip
         )
-        newcs = []
-        for c in cs:
-            if len(c.terms) < 3:
-                newcs.append(c)
-                continue
-            fault_dof = c.terms[2].dof - m.n_dofs('surf')
-            if fault_dof % 3 != 0:
-                newcs.append(c)
-                continue
+        cm, c_rhs = tct.build_constraint_matrix(cs, m.n_dofs())
 
-            for t in c.terms[:2]:
-                newcs.append(ConstraintEQ([Term(t.val, t.dof)], slip[fault_dof] / 2.0))
-        cm, c_rhs = tct.build_constraint_matrix(newcs, m.n_dofs())
-
-        iop = tct.SumOp([T, tct.MultOp(mass_op, 0.5)])
-        rhs = -iop.dot(c_rhs)
+        rhs = -H.dot(c_rhs)
         out = tectosaur_topo.solve.iterative_solve(
-            iop, cm, rhs, lambda x: x, dict(solver_tol = 1e-5)
+            H, cm, rhs, lambda x: x, dict(solver_tol = 1e-4)
         )
         return out + c_rhs
     return f

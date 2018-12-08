@@ -2,6 +2,8 @@ import logging
 import numpy as np
 import uuid
 
+from scipy.optimize import fsolve
+
 import tectosaur as tct
 import cppimport.import_hook
 from .pt_average import pt_averageD
@@ -125,7 +127,7 @@ def init_creep(model):
         return aging_law(model.cfg, V_i, state)
     state_i = fsolve(f, 0.7)[0]
     sigma_n = model.cfg['additional_normal_stress']
-    tau_i = newton.F(V_i, sigma_n, state_i, model.cfg['a'][0], model.cfg['V0'])
+    tau_i = newton.F(V_i, sigma_n, state_i, model.cfg['a'][0], model.cfg['V0'], model.cfg['C'])
     init_traction = tau_i * model.field_inslipdir_interior
     init_slip_deficit = model.traction_to_slip(init_traction)
     init_state =  state_i * np.ones((model.m.n_tris('fault') * 3))
