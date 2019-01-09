@@ -11,7 +11,11 @@ from . import newton
 
 def get_farfield_op(cfg):
     if cfg['use_fmm']:
-        return tct.FMMFarfieldOp(cfg['fmm_mac'], cfg['pts_per_cell'], alpha = cfg['fmm_alpha'])
+        return tct.FMMFarfieldOp(
+            mac = cfg['fmm_mac'],
+            pts_per_cell = cfg['pts_per_cell'],
+            order = cfg['fmm_order']
+        )
     else:
         return tct.TriToTriDirectFarfieldOp
 
