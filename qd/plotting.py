@@ -11,7 +11,8 @@ from .data import skip_existing_prefixed_folders
 from .basis_convert import dofs_to_pts
 
 def plot_fields(model, field, which = 'fault', levels = None, cmap = 'seismic',
-        symmetric_scale = False, ds = None, figsize = None, dims = [0,2]):
+        symmetric_scale = False, ds = None, figsize = None, dims = [0,2],
+        xlim = None, ylim = None):
 
     field_reshape = field.reshape((model.m.n_tris(which) * 3, -1))
     n_fields = field_reshape.shape[1]
@@ -35,8 +36,14 @@ def plot_fields(model, field, which = 'fault', levels = None, cmap = 'seismic',
             model.m.pts[:,dims[0]], model.m.pts[:,dims[1]], which_tris, plot_f[:,d],
             cmap = cmap, levels = f_levels, extend = 'both'
         )
-        plt.xlim([np.min(which_pts[:,dims[0]]), np.max(which_pts[:,dims[0]])])
-        plt.ylim([np.min(which_pts[:,dims[1]]), np.max(which_pts[:,dims[1]])])
+        if xlim is None:
+            plt.xlim([np.min(which_pts[:,dims[0]]), np.max(which_pts[:,dims[0]])])
+        else:
+            plt.xlim(xlim)
+        if ylim is None:
+            plt.ylim([np.min(which_pts[:,dims[1]]), np.max(which_pts[:,dims[1]])])
+        else:
+            plt.ylim(ylim)
         plt.colorbar(cntf)
     plt.show()
 

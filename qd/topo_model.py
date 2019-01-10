@@ -30,8 +30,7 @@ class TopoModel:
         self.setup_mesh(m)
         self.setup_edge_bcs()
         self.disp_deficit = np.zeros(m.n_dofs('surf'))
-        self.disp_deficit_vel = np.zeros(m.n_dofs('surf'))
-        self.disp_deficit_t = 0
+        self.old_slip_deficit = np.zeros(m.n_dofs('fault'))
 
     def make_derivs(self):
         return self.get_derivs
@@ -68,11 +67,10 @@ class TopoModel:
 
         do_fast_step = self.do_fast_step()
         if do_fast_step:
-            appx_disp_deficit = (
-                self.disp_deficit
-                + (t - self.disp_deficit_t) * self.disp_deficit_vel
+            disp_deficit = self.slip_to_disp_one_jacobi_step(
+                self.disp_deficit, slip_deficit, self.old_slip_deficit
             )
-            deficit = np.concatenate((appx_disp_deficit, slip_deficit))
+            deficit = np.concatenate((disp_deficit, slip_deficit))
         else:
             deficit = self.slip_to_disp(slip_deficit)
         timer.report(f'disp_slip(fast={do_fast_step})')
@@ -97,31 +95,33 @@ class TopoModel:
         if len(ts) >= 2:
             slip_deficit, _ = self.get_components(ys[-1])
             if len(ts) % self.cfg['refresh_disp_freq'] == 0:
-                full_deficit = self.slip_to_disp(slip_deficit)
+                full_deficit = self.m.get_dofs(
+                    self.slip_to_disp(slip_deficit),
+                    'surf'
+                )
+                self.old_slip_deficit = slip_deficit
             else:
-                full_deficit = self.slip_to_disp2(self.disp_deficit, slip_deficit)
-            new_disp_deficit = self.m.get_dofs(full_deficit, 'surf')
-            dt = ts[-1] - ts[-2]
-            self.disp_deficit_vel = (new_disp_deficit - self.disp_deficit) / dt
-            self.disp_deficit = new_disp_deficit
-            self.disp_deficit_t = ts[-1]
+                self.disp_deficit = self.slip_to_disp_one_jacobi_step(
+                    self.disp_deficit, slip_deficit, self.old_slip_deficit
+                )
+                self.old_slip_deficit = slip_deficit
 
-    def display_model(self, t, y, plotter = plot_fields):
+    def display(self, t, y, plotter = plot_fields):
         print(t / siay)
         data = self.solve_for_full_state(t, y)
         disp_slip, state, traction, fault_V, dstatedt = data
         print('slip deficit')
-        plotter(self, self.m.get_dofs(disp_slip, 'fault'))
+        plotter(self, self.m.get_dofs(disp_slip, 'fault'), dims = [0,1])
         print('surface displacement deficit')
         plotter(self, self.m.get_dofs(disp_slip, 'surf'), which = 'surf', dims = [0,1])
         print('fault V')
-        plotter(self, np.log10(np.abs(fault_V) + 1e-40))
+        plotter(self, np.log10(np.abs(fault_V) + 1e-40), dims = [0,1])
         print('traction on fault')
-        plotter(self, self.m.get_dofs(traction, 'fault'))
+        plotter(self, self.m.get_dofs(traction, 'fault'), dims = [0,1])
         print('traction on surface')
         plotter(self, self.m.get_dofs(traction, 'surf'), which = 'surf', dims = [0,1])
         print('state')
-        plotter(self, state)
+        plotter(self, state, dims = [0,1])
 
     @property
     @remember
@@ -130,8 +130,8 @@ class TopoModel:
 
     @property
     @remember
-    def slip_to_disp2(self):
-        return get_slip_to_disp2(self.m, self.cfg)
+    def slip_to_disp_one_jacobi_step(self):
+        return get_slip_to_disp_one_jacobi_step(self.m, self.cfg, self.H())
 
     @property
     @remember
@@ -194,56 +194,39 @@ class TopoModel:
             'surf'
         )
 
-
-def get_slip_to_disp2(m, cfg):
-    n_surf = m.n_dofs('surf')
-    n_fault = m.n_dofs('fault')
-    n_total = m.n_dofs()
-
-    cs = tct.continuity_constraints(m.pts, m.tris, m.get_start('fault'))
-    cs.extend(tct.free_edge_constraints(m.get_tris('surf')))
+def get_slip_to_disp_one_jacobi_step(m, cfg, H):
+    base_cs = tct.continuity_constraints(m.pts, m.tris, m.get_start('fault'))
+    base_cs.extend(tct.free_edge_constraints(m.tris))
+    cs = base_cs + tct.all_bc_constraints(
+        m.n_tris('surf'), m.n_tris(), np.zeros(m.n_dofs('fault'))
+    )
     cm, c_rhs = tct.build_constraint_matrix(cs, m.n_dofs())
 
-    T = build_elastic_op(
-        m, cfg, 'T',
-        obs_subset = m.get_tri_idxs('surf'),
-        src_subset = np.arange(m.tris.shape[0])
-    )
+    near = H.nearfield.full_scipy_mat_no_correction()
+    diag = cm.T.dot(near.dot(cm)).diagonal()
 
-    disp_mass_op = tct.MassOp(
-        cfg['tectosaur_cfg']['quad_mass_order'], m.pts, m.tris
-    ).mat * 0.5
-    lil_mat = disp_mass_op.tolil()
-    for i in range(n_surf, lil_mat.shape[0]):
-        lil_mat.data[i] = [1.0]
-        lil_mat.rows[i] = [i]
-    disp_mass_op = lil_mat.tocsr()
-    constrained_mass_op = cm.T.dot(disp_mass_op.dot(cm))
+    def f(disp, slip, old_slip):
+        #TODO: this is optimizable
+        cs = base_cs + tct.all_bc_constraints(
+            m.n_tris('surf'), m.n_tris(), slip
+        )
+        cm, c_rhs = tct.build_constraint_matrix(cs, m.n_dofs())
+        cs_old = base_cs + tct.all_bc_constraints(
+            m.n_tris('surf'), m.n_tris(), old_slip
+        )
+        _, c_rhs_old = tct.build_constraint_matrix(cs_old, m.n_dofs())
 
-    def f(in_surf_disp, in_fault_disp):
-        t = cfg['Timer']()
-        full_disp = np.concatenate((in_surf_disp, in_fault_disp))
-        t.report('concat')
-        rhs = np.empty(full_disp.shape[0])
-        rhs[:m.n_dofs('surf')] = -T.dot(full_disp)
-        t.report('Tdot')
-        rhs[m.n_dofs('surf'):] = in_fault_disp
-        t.report('set rhs fault')
-        constrained_rhs = cm.T.dot(rhs)
-        t.report('constrain rhs')
-        out = cm.dot(cg(constrained_mass_op, constrained_rhs)[0])
-        t.report('solve')
-        return out
+        start_val = np.concatenate((disp, slip))
+        delta = cm.dot(
+            (1.0 / diag) * (cm.T.dot(H.dot(start_val)))
+        )
+        out = start_val - delta - c_rhs_old + c_rhs
+        return m.get_dofs(out, 'surf')
     return f
-
 
 def get_slip_to_disp(m, cfg, H):
     base_cs = tct.continuity_constraints(m.pts, m.tris, m.get_start('fault'))
     base_cs.extend(tct.free_edge_constraints(m.tris))
-
-    mass_op = tct.MassOp(
-        cfg['tectosaur_cfg']['quad_mass_order'], m.pts, m.tris
-    ).mat
 
     def f(slip):
         cs = base_cs + tct.all_bc_constraints(
