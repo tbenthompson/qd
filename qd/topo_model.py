@@ -67,10 +67,7 @@ class TopoModel:
 
         do_fast_step = self.do_fast_step()
         if do_fast_step:
-            disp_deficit = self.slip_to_disp_one_jacobi_step(
-                self.disp_deficit, slip_deficit, self.old_slip_deficit
-            )
-            deficit = np.concatenate((disp_deficit, slip_deficit))
+            deficit = np.concatenate((self.disp_deficit, slip_deficit))
         else:
             deficit = self.slip_to_disp(slip_deficit)
         timer.report(f'disp_slip(fast={do_fast_step})')
@@ -242,7 +239,7 @@ def get_slip_to_disp(m, cfg, H):
     return f
 
 def get_disp_slip_to_traction(m, cfg, H):
-    csS = tct.continuity_constraints(m.pts, m.tris, m.get_start('fault'))
+    csS = tct.all_bc_constraints(0, m.n_tris('surf'), np.zeros(m.n_dofs('surf')))
     csF = tct.continuity_constraints(m.pts, m.get_tris('fault'), m.get_end('fault'))
     cs = tct.build_composite_constraints((csS, 0), (csF, m.n_dofs('surf')))
     cs.extend(tct.free_edge_constraints(m.tris))
