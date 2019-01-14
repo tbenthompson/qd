@@ -45,6 +45,7 @@ def plot_fields(model, field, which = 'fault', levels = None, cmap = 'seismic',
         else:
             plt.ylim(ylim)
         plt.colorbar(cntf)
+    plt.tight_layout()
     plt.show()
 
 def get_levels(f, symmetric_scale):

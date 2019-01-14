@@ -80,8 +80,7 @@ Vec3 solve_for_dof_mag(const Vec3& traction_vec, double state, const Vec3& norma
     auto normal_stress_vec = projection(traction_vec, normal);
     auto shear_traction_vec = sub(traction_vec, normal_stress_vec);
 
-    //TODO: fix the normal stress!
-    double normal_mag = 0.0;//length(normal_stress_vec);
+    double normal_mag = length(normal_stress_vec);
     double shear_mag = length(shear_traction_vec);
     if (shear_mag < eps) {
         return {0,0,0};

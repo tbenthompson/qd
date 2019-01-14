@@ -25,6 +25,18 @@ class Integrator:
 
         self.setup_rk23(init_step_size)
 
+    @staticmethod
+    def restart(data):
+        data.model.restart(data.ts[-1], data.ys[-1])
+        out = Integrator(
+            data.model,
+            (data.ts[-1], data.ys[-1]),
+            ChunkedDataSaver(existing_folder = data.folder_name)
+        )
+        out.h_t = data.ts.tolist()
+        out.h_y = [data.ys[i] for i in range(data.ys.shape[0])]
+        return out
+
     def setup_rk23(self, init_step_size):
         init_t, init_y = self.init_conditions
         self.rk23 = RK23(
@@ -44,7 +56,9 @@ class Integrator:
         if display_fnc is None:
             display_fnc = lambda: print(self.h_t[-1])
 
+        # import time
         for i in range(n_steps):
+            # start = time.time()
             if until is not None and integrator.t > until:
                 return
             assert(self.rk23.step() == None)
@@ -57,3 +71,5 @@ class Integrator:
             if i % display_interval == 0:
                 display_fnc(self)
             self.data_handler.stepped(self)
+            # for i in range(20):
+            #     print('full step', time.time() - start)

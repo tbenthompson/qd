@@ -108,14 +108,17 @@ def rate_state_solve(model, traction, state):
             )
     timer.report('pt avg')
 
-    # inslipdir_speed = np.sum(ptavg_V.reshape((-1,3)) * model.field_inslipdir_interior.reshape((-1,3)), axis = 1)
-    # inslipdir_speed /= np.linalg.norm(model.field_inslipdir_interior.reshape((-1,3)), axis = 1)
+    inslipdir_speed = np.sum(ptavg_V.reshape((-1,3)) * model.field_inslipdir_interior.reshape((-1,3)), axis = 1)
+    inslipdir_speed /= np.linalg.norm(model.field_inslipdir_interior.reshape((-1,3)), axis = 1)
     # inslipdir_speed[inslipdir_speed < 0] = 0.0
     # inslipdir_speed[np.isnan(inslipdir_speed)] = 0.0
     # inslipdirV = inslipdir_speed[:,np.newaxis] * model.field_inslipdir_interior.reshape((-1,3))
+    ptavg_V.reshape((-1,3))[inslipdir_speed < 0,:] = 0.0
+    ptavg_V.reshape((-1,3))[np.isnan(inslipdir_speed)] = 0.0
 
     out = (
         model.field_inslipdir_edges * model.cfg['plate_rate']
+        # + inslipdirV.flatten()
         + ptavg_V.flatten()
     )
     timer.report('rate_state_solve --> out')

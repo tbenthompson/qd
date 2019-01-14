@@ -1,7 +1,7 @@
 import logging
 import numpy as np
 
-from scipy.sparse.linalg import spsolve
+from scipy.sparse.linalg import cg
 
 import tectosaur as tct
 import tectosaur_topo
@@ -11,17 +11,18 @@ from tectosaur.constraint_builders import free_edge_constraints
 from tectosaur.constraints import build_constraint_matrix
 from tectosaur.util.timer import Timer
 
-from .model_helpers import calc_derived_constants, remember, build_elastic_op
+from . import siay
+from .model_helpers import (
+    calc_derived_constants, remember, build_elastic_op,
+    rate_state_solve, state_evolution)
 from .plotting import plot_fields
 
 class FullspaceModel:
     def __init__(self, m, cfg):
         cfg = calc_derived_constants(cfg)
         self.cfg = cfg
-        self.cfg['Timer'] = self.cfg.get(
-            'Timer',
-            lambda: Timer(output_fnc = lambda x: None)
-        )
+        if not 'Timer' in self.cfg or self.cfg['Timer'] is None:
+            self.cfg['Timer'] = lambda: Timer(output_fnc = lambda x: None)
         self.setup_mesh(m)
         self.setup_edge_bcs()
 
@@ -31,6 +32,12 @@ class FullspaceModel:
             slip, slip_deficit, state, traction, V, dstatedt = data
             return np.concatenate((V, dstatedt))
         return derivs
+
+    def get_components(self, y):
+        slip_end = self.m.n_dofs('fault')
+        slip = y[:slip_end]
+        state = y[slip_end:]
+        return slip, state
 
     def solve_for_full_state(self, t, y):
         out = dict()
@@ -56,19 +63,21 @@ class FullspaceModel:
 
         return slip, slip_deficit, state, traction, V, dstatedt
 
-    def display_model(self, plotter = plot_fields):
-        clear_output(wait = True)
-        print(integrator.step_idx(), integrator.h_t[-1] / siay)
+    def post_step(self, ts, ys, rk):
+        pass
+
+    def display(self, t, y, plotter = plot_fields):
+        print(t / siay)
         data = self.solve_for_full_state(t, y)
         slip, slip_deficit, state, traction, V, dstatedt = data
         print('slip')
-        plotter(model, slip)
+        plotter(self, slip)
         print('V')
-        plotter(model, np.log10(np.abs(V) + 1e-40))
+        plotter(self, np.log10(np.abs(V) + 1e-40))
         print('traction')
-        plotter(model, traction)
+        plotter(self, traction)
         print('state')
-        plotter(model, state)
+        plotter(self, state)
 
     @property
     @remember
@@ -96,7 +105,7 @@ class FullspaceModel:
 
     def setup_edge_bcs(self):
         cs = free_edge_constraints(self.m.get_tris('fault'))
-        cm, c_rhs = build_constraint_matrix(cs, self.m.n_dofs('fault'))
+        cm, c_rhs, _ = build_constraint_matrix(cs, self.m.n_dofs('fault'))
 
         constrained_slip = np.ones(cm.shape[1])
         self.ones_interior = cm.dot(constrained_slip)
@@ -127,7 +136,7 @@ def setup_logging(cfg):
 def build_continuity(m, cfg):
     cs = tct.continuity_constraints(m.pts, m.tris, m.tris.shape[0])
     cs.extend(free_edge_constraints(m.get_tris('fault')))
-    cm, c_rhs = build_constraint_matrix(cs, m.n_dofs('fault'))
+    cm, c_rhs, _ = build_constraint_matrix(cs, m.n_dofs('fault'))
     return cm
 
 def get_slip_to_traction(m, cfg):
@@ -135,13 +144,13 @@ def get_slip_to_traction(m, cfg):
         t = cfg['Timer']()
         rhs = -f.H.dot(slip)
         t.report('H.dot')
-        out = f.cm.dot(spsolve(f.constrained_traction_mass_op, f.cm.T.dot(rhs)))
-        t.report('spsolve')
+        soln = cg(f.constrained_traction_mass_op, f.cm.T.dot(rhs))
+        out = cfg['sm'] * f.cm.dot(soln[0])
+        t.report('solve')
 
         if cfg.get('only_x', False):
             out.reshape((-1,3))[:,1] = 0.0
             out.reshape((-1,3))[:,2] = 0.0
-        out = cfg['sm'] * out
         t.report('return')
         return out
 

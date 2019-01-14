@@ -46,11 +46,13 @@ def skip_existing_prefixed_folders(prefix):
 Saves chunks of time steps in separate files for easy reloading.
 """
 class ChunkedDataSaver:
-    def __init__(self, chunk_size = 100, folder_prefix = 'data'):
+    def __init__(self, chunk_size = 100, folder_prefix = 'data', existing_folder = None):
         self.chunk_size = chunk_size
         self.folder_prefix = folder_prefix
-        self.folder_name = skip_existing_prefixed_folders(self.folder_prefix)
-        os.makedirs(self.folder_name)
+        self.folder_name = existing_folder
+        if self.folder_name is None:
+            self.folder_name = skip_existing_prefixed_folders(self.folder_prefix)
+            os.makedirs(self.folder_name)
 
     def initialized(self, integrator):
         with open(initial_data_path(self.folder_name), 'wb') as f:
