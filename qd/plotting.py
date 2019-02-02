@@ -12,13 +12,13 @@ from .basis_convert import dofs_to_pts
 
 def plot_fields(model, field, which = 'fault', levels = None, cmap = 'seismic',
         symmetric_scale = False, ds = None, figsize = None, dims = [0,2],
-        xlim = None, ylim = None):
+        xlim = None, ylim = None, figscale = (6,5)):
 
     field_reshape = field.reshape((model.m.n_tris(which) * 3, -1))
     n_fields = field_reshape.shape[1]
 
     if figsize is None:
-        figsize = (6 * n_fields,5)
+        figsize = (figscale[0] * n_fields,figscale[1])
     plt.figure(figsize = figsize)
 
     which_tris = model.m.get_tris(which)
@@ -131,8 +131,12 @@ class QDPlotData:
 
     def nicefig(self, field, levels, contour_levels, cmap,
             t_years = None, filepath = None, figsize = (10,8),
-            which = 'fault', dim = [0,2]):
-        contour_levels = levels[::3]
+            which = 'fault', dim = [0,2], xlim = None, ylim = None,
+            xticks = None, yticks = None, cbar_ticks = None,
+            cbar_label = None, xlabel = '$x$', ylabel = '$y$'):
+
+        if contour_levels is None:
+            contour_levels = levels[::3]
 
         is_tde = field.size == self.model.m.n_tris(which)
 
@@ -156,8 +160,8 @@ class QDPlotData:
         ax.tricontour(
             self.model.m.pts[:,dim[0]], self.model.m.pts[:,dim[1]], which_tris,
             pt_field, levels = contour_levels, extend = 'both',
-            linestyles = 'solid', linewidths = 0.75,
-            colors = ['#FFFFFF'] * contour_levels.shape[0]
+            linestyles = 'solid', linewidths = 0.5,
+            colors = ['k'] * contour_levels.shape[0]
         )
 
         minpt = np.min(which_pts, axis = 0)
@@ -165,14 +169,22 @@ class QDPlotData:
         width = maxpt - minpt
 
         F = 0.03
-        ax.set_xlim([
-            minpt[dim[0]] - width[dim[0]] * F,
-            maxpt[dim[0]] + width[dim[0]] * F
-        ])
-        ax.set_ylim([
-            minpt[dim[1]] - width[dim[1]] * F,
-            maxpt[dim[1]] + width[dim[1]] * F
-        ])
+        if xlim is None:
+            ax.set_xlim([
+                minpt[dim[0]] - width[dim[0]] * F,
+                maxpt[dim[0]] + width[dim[0]] * F
+            ])
+        else:
+            ax.set_xlim(xlim)
+        if ylim is None:
+            ax.set_ylim([
+                minpt[dim[1]] - width[dim[1]] * F,
+                maxpt[dim[1]] + width[dim[1]] * F
+            ])
+        else:
+            ax.set_ylim(ylim)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
         ax.set_aspect('equal', adjustable='box')
 
         text_pos = (
@@ -182,7 +194,17 @@ class QDPlotData:
         if t_years is not None:
             ax.text(text_pos[0], text_pos[1], '%.9f' % t_years)
 
-        fig.colorbar(color_plot, cax = cax)
+        if xticks is not None:
+            ax.set_xticks(xticks)
+        if yticks is not None:
+            ax.set_yticks(yticks)
+
+        cbar = fig.colorbar(color_plot, cax = cax)
+        if cbar_ticks is not None:
+            cbar.set_ticks(cbar_ticks)
+        if cbar_label is not None:
+            cbar.set_label(cbar_label)
+
         if filepath is None:
             plt.show()
         else:
